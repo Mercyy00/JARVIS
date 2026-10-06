@@ -1,0 +1,23 @@
+{
+  "assistant": {
+    "name": "FRIDAY"
+  },
+  "llm": {
+    "provider": "google",
+    "model": "gemini-flash-lite-latest",
+    "api_key": "",
+    "base_url": null,
+    "max_tokens": 1024
+  },
+  "user": {
+    "name": "Jay",
+    "browser": null
+  },
+  "voice": {
+    "name": "en-US-AriaNeural",
+    "rate": "+12%",
+    "pronounce_vyra": "Friday",
+    "wake_enabled": true,
+    "wake_words": ["friday", "buddy", "jarvis", "vyra"]
+  }
+}

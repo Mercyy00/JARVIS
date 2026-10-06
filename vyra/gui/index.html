@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FRIDAY // AI Assistant</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body class="hud-body pip-mode">
+  <!-- Ambient Atmospheric Light (Anti-slop: subtle, non-intrusive) -->
+  <div class="ambient-glow" aria-hidden="true"></div>
+
+  <!-- HUD Container -->
+  <div class="hud-container">
+    
+    <!-- Top Header: Navigation & Window Controls -->
+    <header class="hud-header">
+      <div class="header-left">
+        <div class="brand-badge">
+          <div class="brand-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="12 2 2 7 12 12 22 7 12 2" stroke-linecap="round" stroke-linejoin="round"/>
+              <polyline points="2 17 12 22 22 17" stroke-linecap="round" stroke-linejoin="round"/>
+              <polyline points="2 12 12 17 22 12" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-title">FRIDAY</span>
+            <span class="brand-tag">INTELLIGENCE</span>
+          </div>
+        </div>
+        <div class="status-indicator" title="System Connection Status">
+          <span class="pulse-dot"></span>
+          <span class="status-text" id="statusBadgeText">ONLINE</span>
+        </div>
+      </div>
+
+      <div class="header-center deck-only">
+        <div class="security-level">
+          <span class="sec-label">OPERATOR</span>
+          <span class="sec-val" id="headerUserName">JAY</span>
+          <span class="sec-divider">/</span>
+          <span class="sec-label">CLEARANCE</span>
+          <span class="sec-val">LEVEL 9</span>
+        </div>
+        <button id="wakeToggleBtn" class="hud-wake-btn active" title="Toggle Passive Wake Word ('Hey buddy' / 'FRIDAY')">
+          <span class="wake-dot"></span>
+          <span id="wakeStatusText">WAKE: FRIDAY [ON]</span>
+        </button>
+      </div>
+
+      <div class="header-right">
+        <div class="hud-clock deck-only">
+          <span id="liveTime">00:00:00</span>
+          <span id="liveDate" class="hud-date">OCT 04, 2026</span>
+        </div>
+        
+        <!-- Window Management Controls with Clean Vector Glyphs -->
+        <div class="header-window-ctrls">
+          <button id="pinBtn" class="hud-btn-icon active" title="Always On Top (Pin Float)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="17" x2="12" y2="22"></line>
+              <path d="M5 17h14v-2l-2-3V5a1 1 0 0 0-1-1h-8a1 1 0 0 0-1 1v7l-2 3v2z"></path>
+            </svg>
+          </button>
+          <button id="modeToggleBtn" class="hud-btn-icon" title="Toggle PiP Widget / Full Deck">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <rect x="11" y="11" width="8" height="8" rx="1" ry="1"></rect>
+            </svg>
+          </button>
+          <button id="drawerToggleBtn" class="hud-btn-icon" title="System Diagnostics & Settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="4" y1="21" x2="4" y2="14"></line>
+              <line x1="4" y1="10" x2="4" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12" y2="3"></line>
+              <line x1="20" y1="21" x2="20" y2="16"></line>
+              <line x1="20" y1="12" x2="20" y2="3"></line>
+              <line x1="1" y1="14" x2="7" y2="14"></line>
+              <line x1="9" y1="8" x2="15" y2="8"></line>
+              <line x1="17" y1="16" x2="23" y2="16"></line>
+            </svg>
+          </button>
+          <button id="muteBtn" class="hud-btn-icon" title="Toggle Voice Mute">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+            </svg>
+          </button>
+          <button id="minBtn" class="hud-btn-icon" title="Minimize Window">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+          <button id="closeBtn" class="hud-btn-icon close-btn" title="Close Window">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Dashboard -->
+    <main class="hud-main">
+      
+      <!-- Left Column: Telemetry & Protocols (Deck Mode Only) -->
+      <section class="hud-panel left-panel deck-only">
+        <div class="panel-header">
+          <div class="panel-header-badge">HARDWARE</div>
+          <h3>SYSTEM TELEMETRY</h3>
+        </div>
+
+        <div class="telemetry-grid">
+          <div class="telemetry-card">
+            <div class="telemetry-label">
+              <span>CPU PROCESSING</span>
+              <span id="cpuVal" class="stat-highlight">0%</span>
+            </div>
+            <div class="progress-bar">
+              <div id="cpuBar" class="progress-fill" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <div class="telemetry-card">
+            <div class="telemetry-label">
+              <span>SYSTEM MEMORY</span>
+              <span id="ramVal" class="stat-highlight">0%</span>
+            </div>
+            <div class="progress-bar">
+              <div id="ramBar" class="progress-fill" style="width: 0%"></div>
+            </div>
+            <div class="telemetry-sub" id="ramText">0.0 / 0.0 GB</div>
+          </div>
+
+          <div class="telemetry-card">
+            <div class="telemetry-label">
+              <span>GPU ENGINE</span>
+              <span class="badge-emerald">ONLINE</span>
+            </div>
+            <div class="hardware-name" id="gpuName">NVIDIA GeForce RTX 2050</div>
+          </div>
+
+          <div class="telemetry-card">
+            <div class="telemetry-label">
+              <span>NEURAL ENGINE</span>
+              <span class="badge-cyan" id="providerBadge">GOOGLE</span>
+            </div>
+            <div class="hardware-name" id="modelName">gemini-flash-lite-latest</div>
+          </div>
+
+          <div class="telemetry-card" id="batteryCard">
+            <div class="telemetry-label">
+              <span>POWER MATRIX</span>
+              <span id="batteryVal" class="stat-highlight">--%</span>
+            </div>
+            <div class="progress-bar">
+              <div id="batteryBar" class="progress-fill" style="width: 0%"></div>
+            </div>
+            <div class="telemetry-sub" id="batteryStatusText">AC POWER</div>
+          </div>
+        </div>
+
+        <!-- Quick Directive Protocol Launcher -->
+        <div class="panel-sub-header">QUICK PROTOCOLS</div>
+        <div class="protocol-grid">
+          <button class="proto-btn" data-cmd="open Antigravity"><span class="proto-code">01</span><span class="proto-label">ANTIGRAVITY</span></button>
+          <button class="proto-btn" data-cmd="open brave browser"><span class="proto-code">02</span><span class="proto-label">BRAVE</span></button>
+          <button class="proto-btn" data-cmd="close the active browser tab"><span class="proto-code">03</span><span class="proto-label">CLOSE TAB</span></button>
+          <button class="proto-btn" data-cmd="keep the browser window and Antigravity window and rest other close all the windows which are currently running"><span class="proto-code">04</span><span class="proto-label">CLEAN DESKTOP</span></button>
+          <button class="proto-btn" data-cmd="list running applications"><span class="proto-code">05</span><span class="proto-label">RUNNING APPS</span></button>
+          <button class="proto-btn" data-cmd="what is currently open on my screen?"><span class="proto-code">06</span><span class="proto-label">VISION SCAN</span></button>
+          <button class="proto-btn" data-cmd="check battery status"><span class="proto-code">07</span><span class="proto-label">BATTERY</span></button>
+          <button class="proto-btn" data-cmd="what is copied on my clipboard?"><span class="proto-code">08</span><span class="proto-label">CLIPBOARD</span></button>
+          <button class="proto-btn" data-cmd="open Raaga app and play songs"><span class="proto-code">09</span><span class="proto-label">RAAGA MUSIC</span></button>
+          <button class="proto-btn" data-cmd="turn volume up"><span class="proto-code">10</span><span class="proto-label">VOL UP</span></button>
+          <button class="proto-btn" data-cmd="open youtube"><span class="proto-code">11</span><span class="proto-label">YOUTUBE</span></button>
+          <button class="proto-btn" data-cmd="open downloads folder"><span class="proto-code">12</span><span class="proto-label">DOWNLOADS</span></button>
+        </div>
+      </section>
+
+      <!-- Center Column: Kinetic Arc Reactor & Conversation Deck (Primary Core) -->
+      <section class="hud-panel center-panel">
+        
+        <!-- Kinetic Arc Reactor Core -->
+        <div class="reactor-wrapper">
+          <!-- Concentric Precision Orbital Rings -->
+          <div class="hud-ring ring-outer"></div>
+          <div class="hud-ring ring-orbit"></div>
+          <div class="hud-ring ring-inner"></div>
+
+          <!-- Central Core Arc Button -->
+          <div id="coreReactor" class="arc-core state-idle" title="Click or Press Space to Transmit Voice">
+            <div class="core-glass-surface"></div>
+            <div class="core-radial-aura"></div>
+            <div class="core-iris">
+              <span id="coreIcon" class="core-icon">⚡</span>
+            </div>
+          </div>
+
+          <div class="arc-status-box">
+            <div class="status-code" id="reactorState">CORE STATE: STANDBY</div>
+            <div class="status-hint" id="reactorHint">[SPACE TO SPEAK // SAY "FRIDAY" OR "BUDDY"]</div>
+          </div>
+        </div>
+
+        <!-- Real-Time Audio Visualizer Waveform -->
+        <div class="visualizer-container">
+          <canvas id="waveformCanvas" width="400" height="42"></canvas>
+        </div>
+
+        <!-- Holographic Communications Stream -->
+        <div class="chat-feed-box" id="chatFeedBox">
+          <div class="chat-feed-header">
+            <div class="chat-feed-meta">
+              <span class="pulse-indicator-small"></span>
+              <span class="chat-feed-tag">COMMUNICATIONS // STREAM</span>
+            </div>
+            <button id="clearChatBtn" class="chat-clear-btn" title="Clear chat stream">CLEAR</button>
+          </div>
+          <div class="chat-messages-stream" id="chatStream">
+            <div class="chat-bubble vyra">
+              <span class="chat-speaker">FRIDAY</span>
+              <span class="chat-text">Standing by, boss. What directive would you like to execute?</span>
+            </div>
+          </div>
+          <span id="liveSpeechText" style="display:none">Standing by, boss. What directive would you like to execute?</span>
+        </div>
+
+        <!-- PiP Mode Quick Action Ribbon -->
+        <div class="pip-quick-ribbon">
+          <button class="pip-chip highlight" data-cmd="open Raaga app and play songs">
+            <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+            <span>RAAGA</span>
+          </button>
+          <button class="pip-chip" data-cmd="open Antigravity">
+            <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"></path><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"></path></svg>
+            <span>ANTIGRAVITY</span>
+          </button>
+          <button class="pip-chip" data-cmd="what is currently open on my screen?">
+            <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            <span>VISION</span>
+          </button>
+          <button class="pip-chip" data-cmd="check battery status">
+            <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="10" x="2" y="7" rx="2" ry="2"></rect><line x1="22" x2="22" y1="11" y2="13"></line></svg>
+            <span>BATTERY</span>
+          </button>
+          <button class="pip-chip" data-cmd="what is copied on my clipboard?">
+            <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"></rect><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path></svg>
+            <span>CLIPBOARD</span>
+          </button>
+          <button class="pip-chip" data-cmd="keep the browser window and Antigravity window and rest other close all the windows which are currently running">
+            <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 3 18 18"></path><path d="M10.5 5.5A7 7 0 0 1 19 14"></path><path d="M5.5 10.5A7 7 0 0 0 14 19"></path></svg>
+            <span>CLEAN DESK</span>
+          </button>
+          <button class="pip-chip" data-cmd="list running applications">
+            <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"></rect><rect width="20" height="8" x="2" y="14" rx="2" ry="2"></rect><line x1="6" x2="6.01" y1="6" y2="6"></line><line x1="6" x2="6.01" y1="18" y2="18"></line></svg>
+            <span>RUNNING</span>
+          </button>
+          <button class="pip-chip" data-cmd="close the active browser tab">
+            <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 9-6 6"></path><path d="m9 9 6 6"></path><circle cx="12" cy="12" r="10"></circle></svg>
+            <span>CLOSE TAB</span>
+          </button>
+          <button class="pip-chip" data-cmd="play or pause music">
+            <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+            <span>PAUSE/PLAY</span>
+          </button>
+          <button class="pip-chip" data-cmd="turn volume up">
+            <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="19" y1="9" x2="19" y2="15"></line><line x1="16" y1="12" x2="22" y2="12"></line></svg>
+            <span>VOL +</span>
+          </button>
+          <button class="pip-chip" data-cmd="open brave browser">
+            <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+            <span>BRAVE</span>
+          </button>
+          <button class="pip-chip" data-cmd="open downloads folder">
+            <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"></path></svg>
+            <span>DOWNLOADS</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Right Column: Live Terminal Feed & Memory Vault (Deck Mode Only) -->
+      <section class="hud-panel right-panel deck-only">
+        <div class="panel-tabs">
+          <button id="tabLogsBtn" class="tab-btn active">TERMINAL LOGS</button>
+          <button id="tabMemoryBtn" class="tab-btn">MEMORY VAULT</button>
+        </div>
+
+        <div id="tabLogs" class="tab-content active">
+          <div id="consoleFeed" class="console-feed">
+            <div class="log-entry system"><span class="log-time">[BOOT]</span> FRIDAY Neural OS Core online.</div>
+            <div class="log-entry system"><span class="log-time">[LINK]</span> Bi-directional telemetry established.</div>
+            <div class="log-entry vyra"><span class="log-time">[FRIDAY]</span> Ready for directives, boss.</div>
+          </div>
+        </div>
+
+        <div id="tabMemory" class="tab-content">
+          <div class="memory-vault">
+            <div class="vault-section">
+              <div class="vault-title">USER PROFILE DOSSIER</div>
+              <div id="profileList" class="vault-list"></div>
+            </div>
+            <div class="vault-section">
+              <div class="vault-title">SAVED SATELLITE LINKS</div>
+              <div id="linksList" class="vault-list"></div>
+            </div>
+            <div class="vault-section">
+              <div class="vault-title">RECENT JOURNAL RECORD</div>
+              <div id="journalText" class="vault-text">(No recent journal recorded)</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Slide-Over Drawer for Diagnostics & System Telemetry -->
+    <div id="hudDrawer" class="hud-drawer">
+      <div class="drawer-header">
+        <div class="drawer-title-wrap">
+          <span class="drawer-badge">DIAGNOSTICS</span>
+          <span class="drawer-title">SYSTEM SETTINGS &amp; TELEMETRY</span>
+        </div>
+        <button id="closeDrawerBtn" class="drawer-close-btn" title="Close drawer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      
+      <!-- Autostart Control Toggle with Modern Pill Switch -->
+      <div class="drawer-autostart-box">
+        <label class="autostart-toggle-label">
+          <div class="switch-container">
+            <input type="checkbox" id="autostartToggle">
+            <span class="switch-slider"></span>
+          </div>
+          <div class="autostart-meta">
+            <span class="autostart-text">START AUTOMATICALLY ON BOOT</span>
+            <span class="autostart-sub">Launches FRIDAY in corner PiP on Windows login</span>
+          </div>
+        </label>
+      </div>
+
+      <!-- Drawer Content Tabs -->
+      <div class="panel-tabs drawer-tabs">
+        <button id="drawerLogsTab" class="tab-btn active">EVENT LOGS</button>
+        <button id="drawerStatsTab" class="tab-btn">HARDWARE</button>
+        <button id="drawerMemoryTab" class="tab-btn">MEMORY</button>
+      </div>
+
+      <div id="drawerLogsContent" class="drawer-content active">
+        <div id="drawerConsoleFeed" class="console-feed"></div>
+      </div>
+
+      <div id="drawerStatsContent" class="drawer-content">
+        <div class="drawer-stats-grid">
+          <div class="drawer-stat-row"><span>CPU PROCESSING:</span> <span id="drawerCpuVal" class="stat-highlight">0%</span></div>
+          <div class="drawer-stat-row"><span>MEMORY ALLOCATION:</span> <span id="drawerRamVal" class="stat-highlight">0%</span></div>
+          <div class="drawer-stat-row"><span>BATTERY STATUS:</span> <span id="drawerBatteryVal" class="stat-highlight">--%</span></div>
+          <div class="drawer-stat-row"><span>GPU ACCELERATOR:</span> <span class="stat-highlight">RTX 2050</span></div>
+          <div class="drawer-stat-row"><span>COGNITIVE MODEL:</span> <span id="drawerModelVal" class="stat-highlight">gemini-flash-lite</span></div>
+        </div>
+      </div>
+
+      <div id="drawerMemoryContent" class="drawer-content">
+        <div class="memory-vault">
+          <div class="vault-section">
+            <div class="vault-title">PROFILE DOSSIER</div>
+            <div id="drawerProfileList" class="vault-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Command Bar -->
+    <footer class="hud-footer">
+      <div class="input-container">
+        <span class="prompt-symbol">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </span>
+        <input type="text" id="commandInput" placeholder="Ask FRIDAY or type directive... (Space to speak)" autocomplete="off">
+        <button id="micToggleBtn" class="hud-btn mic-btn" title="Push To Talk (Hold Space or Click)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="22"></line>
+          </svg>
+          <span class="mic-label">MIC</span>
+        </button>
+        <button id="sendBtn" class="hud-btn send-btn" title="Execute directive">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+      <div class="footer-meta deck-only">
+        <span class="meta-tag">ENCRYPTION: 256-BIT LOCAL</span>
+        <span class="meta-tag">LATENCY: <span id="pingVal">8ms</span></span>
+        <span class="meta-tag">RUNTIME: ATTENTIVE CONTINUOUS</span>
+      </div>
+    </footer>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

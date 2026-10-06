@@ -1,0 +1,7 @@
+# VYRA Phase 2 (voice) — install AFTER requirements.txt:
+#   pip install -r requirements-voice.txt
+faster-whisper>=1.0.0     # local speech-to-text (downloads a model on first run)
+edge-tts>=6.1.0           # free neural text-to-speech
+sounddevice>=0.4.6        # microphone capture
+numpy>=1.24.0
+pygame>=2.5.0             # mp3 playback

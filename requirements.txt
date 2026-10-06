@@ -1,0 +1,10 @@
+# Core dependencies
+anthropic>=0.69.0          # Claude provider
+openai>=1.100.0            # OpenRouter + Google (OpenAI-compatible endpoints)
+python-dotenv>=1.0.1       # load API key from .env
+rich>=13.9.0               # nice terminal UI
+aiohttp>=3.9.0             # HUD server & WebSockets
+pillow>=10.0.0             # screen vision & capture
+psutil>=5.9.0              # system telemetry, battery, processes
+pywebview>=5.0.0           # optional native borderless desktop window
+
