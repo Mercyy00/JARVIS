@@ -1,7 +1,17 @@
 # VYRA Phase 2 (voice) — install AFTER requirements.txt:
 #   pip install -r requirements-voice.txt
 faster-whisper>=1.0.0     # local speech-to-text (downloads a model on first run)
-edge-tts>=6.1.0           # free neural text-to-speech
+edge-tts>=6.1.0           # free neural text-to-speech (cloud, natural)
+piper-tts>=1.8.0          # offline neural TTS for instant short confirmations
+openwakeword>=0.6.0       # instant always-on wake word ("Hey Jarvis")
+onnxruntime>=1.17.0       # inference backend for openWakeWord + Piper
 sounddevice>=0.4.6        # microphone capture
 numpy>=1.24.0
-pygame>=2.5.0             # mp3 playback
+pygame>=2.5.0             # audio playback
+
+# Optional GPU acceleration for Whisper (RTX cards) — makes transcription ~0.3s.
+# Install these too if you have an NVIDIA GPU, then set voice.whisper_device="auto":
+#   nvidia-cublas-cu12  nvidia-cudnn-cu12  nvidia-cuda-runtime-cu12
+# After installing piper-tts, download a voice:
+#   python -m piper.download_voices en_US-ryan-medium --data-dir data/piper
+

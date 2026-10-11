@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from vyra import autostart
+from vyra import reminders
 from vyra import skills
 from vyra import voice as V
 from vyra.brain import Brain
@@ -36,6 +37,21 @@ from vyra.config import has_api_key, load_config
 from vyra.memory import Memory
 
 GUI_DIR = Path(__file__).resolve().parent / "gui"
+
+import logging
+from logging.handlers import RotatingFileHandler
+
+LOG_DIR = ROOT / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+logger = logging.getLogger("friday")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _fh = RotatingFileHandler(
+        LOG_DIR / "friday.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+    )
+    _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(_fh)
+logger.info("=== FRIDAY HUD process starting ===")
 
 config = load_config()
 if not has_api_key(config):
@@ -50,10 +66,13 @@ brain = Brain(config, memory)
 # Voice & Assistant setup
 assistant_name = config.get("assistant", {}).get("name", "FRIDAY")
 v_cfg = config.get("voice", {})
-whisper_model = v_cfg.get("whisper_model", "base")
-voice_name = v_cfg.get("name", "en-US-AriaNeural")
-voice_rate = v_cfg.get("rate", "+12%")
-pronounce_name = v_cfg.get("pronounce_vyra", "Friday")
+whisper_model = v_cfg.get("whisper_model", "small")
+whisper_device = v_cfg.get("whisper_device", "auto")
+voice_name = v_cfg.get("name", "en-US-GuyNeural")
+voice_hindi = v_cfg.get("name_hindi")
+voice_rate = v_cfg.get("rate", "+19%")
+pronounce_name = v_cfg.get("pronounce_vyra", "Rusty")
+use_piper = v_cfg.get("use_piper", True)
 wake_enabled = v_cfg.get("wake_enabled", True)
 wake_words = v_cfg.get("wake_words", V.DEFAULT_WAKE_WORDS)
 
@@ -64,8 +83,30 @@ is_manual_active = False
 is_muted_global = False
 server_loop: asyncio.AbstractEventLoop | None = None
 
-ears = V.Ears(model_size=whisper_model)
-mouth = V.Mouth(voice=voice_name, rate=voice_rate, pronounce_vyra=pronounce_name)
+class _LazyEars:
+    """Defer the heavy Whisper load so the HUD window appears instantly on boot.
+    The model warms up in a background thread; the first voice command only
+    waits if the model isn't ready yet."""
+
+    def __init__(self, **kw):
+        self._kw = kw
+        self._model = None
+        self._lock = threading.Lock()
+
+    def ensure(self):
+        if self._model is None:
+            with self._lock:
+                if self._model is None:
+                    self._model = V.Ears(**self._kw)
+        return self._model
+
+    def transcribe(self, audio):
+        return self.ensure().transcribe(audio)
+
+
+ears = _LazyEars(model_size=whisper_model, device=whisper_device)
+threading.Thread(target=ears.ensure, daemon=True).start()  # warm up off the critical path
+mouth = V.Mouth(voice=voice_name, rate=voice_rate, pronounce_vyra=pronounce_name, voice_hindi=voice_hindi, use_piper=use_piper)
 
 ws_clients = set()
 
@@ -131,6 +172,51 @@ async def telemetry_broadcaster():
         await broadcast_ws(get_telemetry())
 
 
+def reminder_notifier(text: str):
+    """Called from the reminder service thread when a reminder is due."""
+    msg = f"Reminder, Sir: {text}"
+    logger.info("reminder fired: %s", text)
+    if not is_muted_global:
+        threading.Thread(target=lambda: mouth.speak(msg), daemon=True).start()
+    if server_loop and server_loop.is_running():
+        asyncio.run_coroutine_threadsafe(
+            broadcast_ws({"type": "speech", "text": msg, "is_vyra": True}), server_loop)
+        asyncio.run_coroutine_threadsafe(
+            broadcast_ws({"type": "log", "level": "vyra", "message": msg}), server_loop)
+
+
+_proactive_state = {"low_batt": False, "session_start": time.time(), "break_done": False}
+
+
+async def _proactive_say(text: str):
+    await broadcast_ws({"type": "speech", "text": text, "is_vyra": True})
+    await broadcast_ws({"type": "log", "level": "vyra", "message": text})
+    logger.info("proactive: %s", text)
+    if not is_muted_global:
+        await asyncio.to_thread(mouth.speak, text)
+
+
+async def proactive_watcher():
+    """Rusty speaks up on her own: low battery, long work sessions."""
+    await asyncio.sleep(30)
+    while True:
+        try:
+            if not is_manual_active:
+                b = psutil.sensors_battery()
+                if b is not None:
+                    if (not b.power_plugged) and b.percent <= 20 and not _proactive_state["low_batt"]:
+                        _proactive_state["low_batt"] = True
+                        await _proactive_say(f"Sir, battery's down to {round(b.percent)} percent — might want to plug in.")
+                    if b.power_plugged:
+                        _proactive_state["low_batt"] = False
+                if (time.time() - _proactive_state["session_start"] > 90 * 60) and not _proactive_state["break_done"]:
+                    _proactive_state["break_done"] = True
+                    await _proactive_say("You've been grinding a while, Sir. Maybe stretch for a minute?")
+        except Exception:
+            pass
+        await asyncio.sleep(60)
+
+
 async def handle_chat(request):
     global is_muted_global
     data = await request.json()
@@ -141,11 +227,16 @@ async def handle_chat(request):
     if not msg:
         return web.json_response({"reply": ""})
 
+    logger.info("chat in: %s", msg)
     await broadcast_ws({"type": "state", "state": "thinking"})
     try:
-        reply = brain.ask(msg)
+        # Run the (blocking, network-bound) brain call off the event loop so
+        # telemetry + WebSocket traffic keep flowing while FRIDAY thinks.
+        reply = await asyncio.to_thread(brain.ask, msg)
     except Exception as exc:
+        logger.exception("brain error (chat)")
         reply = f"Error during neural processing: {exc}"
+    logger.info("chat reply: %s", reply)
 
     await broadcast_ws({"type": "state", "state": "idle"})
     await broadcast_ws({"type": "speech", "text": reply})
@@ -229,7 +320,7 @@ async def run_conversational_followup_loop(loop, mute: bool = False):
                 lambda: V.record_until_silence(
                     push_to_talk=True,
                     initial_timeout=14.0,  # 14s patient window for follow-up
-                    trail_silence=1.6,     # 1.6s natural pause tolerance
+                    trail_silence=0.9,     # 1.6s natural pause tolerance
                     stop_event=stop_ev,
                     level_callback=on_meter,
                 ),
@@ -256,7 +347,7 @@ async def run_conversational_followup_loop(loop, mute: bool = False):
         if is_w and cmd:
             follow_text = cmd
         elif is_w and not cmd:
-            ack = "Yes boss, what else?"
+            ack = "Yes Sir, what else?"
             await broadcast_ws({"type": "speech", "text": ack})
             if not mute and not is_muted_global:
                 await asyncio.to_thread(mouth.speak, ack)
@@ -264,7 +355,7 @@ async def run_conversational_followup_loop(loop, mute: bool = False):
 
         # Check dismissal
         if is_dismissal(follow_text):
-            farewell = "Standing by, boss."
+            farewell = "Standing by, Sir."
             await broadcast_ws({"type": "log", "level": "user", "message": follow_text})
             await broadcast_ws({"type": "speech", "text": farewell})
             await broadcast_ws({"type": "state", "state": "idle"})
@@ -274,8 +365,9 @@ async def run_conversational_followup_loop(loop, mute: bool = False):
 
         await broadcast_ws({"type": "log", "level": "user", "message": follow_text})
         try:
-            reply = brain.ask(follow_text)
+            reply = await asyncio.to_thread(brain.ask, follow_text)
         except Exception as exc:
+            logger.exception("brain error (followup)")
             reply = f"Error during neural processing: {exc}"
 
         await broadcast_ws({"type": "speech", "text": reply})
@@ -324,7 +416,7 @@ async def handle_voice_listen(request):
                 lambda: V.record_until_silence(
                     push_to_talk=True,
                     initial_timeout=12.0,
-                    trail_silence=1.6,
+                    trail_silence=0.9,
                     stop_event=stop_event,
                     level_callback=on_audio_level,
                 ),
@@ -354,11 +446,13 @@ async def handle_voice_listen(request):
     processed_heard = cmd if (is_w and cmd) else heard
 
     await broadcast_ws({"type": "log", "level": "user", "message": heard})
+    logger.info("voice heard: %s", heard)
 
     # Brain ask
     try:
-        reply = brain.ask(processed_heard)
+        reply = await asyncio.to_thread(brain.ask, processed_heard)
     except Exception as exc:
+        logger.exception("brain error (voice listen)")
         reply = f"Error during neural processing: {exc}"
 
     await broadcast_ws({"type": "speech", "text": reply})
@@ -402,8 +496,9 @@ async def process_wake_event(phrase: str, cmd: str):
             await broadcast_ws({"type": "log", "level": "user", "message": cmd})
             await broadcast_ws({"type": "state", "state": "thinking"})
             try:
-                reply = brain.ask(cmd)
+                reply = await asyncio.to_thread(brain.ask, cmd)
             except Exception as exc:
+                logger.exception("brain error (wake cmd)")
                 reply = f"Error during neural processing: {exc}"
 
             await broadcast_ws({"type": "speech", "text": reply})
@@ -417,7 +512,7 @@ async def process_wake_event(phrase: str, cmd: str):
 
         else:
             # Wake phrase spoken alone: acknowledge and prompt for directive!
-            ack = "Yes boss, what else?"
+            ack = "Yes Sir, what else?"
             await broadcast_ws({"type": "speech", "text": ack})
             await broadcast_ws({"type": "log", "level": "vyra", "message": ack})
             await broadcast_ws({"type": "state", "state": "speaking"})
@@ -452,7 +547,7 @@ async def process_wake_event(phrase: str, cmd: str):
                     lambda: V.record_until_silence(
                         push_to_talk=True,
                         initial_timeout=12.0,
-                        trail_silence=1.6,
+                        trail_silence=0.9,
                         stop_event=stop_ev,
                         level_callback=on_meter,
                     ),
@@ -472,8 +567,9 @@ async def process_wake_event(phrase: str, cmd: str):
 
             await broadcast_ws({"type": "log", "level": "user", "message": follow_cmd})
             try:
-                reply = brain.ask(follow_cmd)
+                reply = await asyncio.to_thread(brain.ask, follow_cmd)
             except Exception as exc:
+                logger.exception("brain error (wake followup)")
                 reply = f"Error during neural processing: {exc}"
 
             await broadcast_ws({"type": "speech", "text": reply})
@@ -527,6 +623,7 @@ def wake_word_listener_thread():
                 continue
 
             print(f"[WAKE ENGAGED] Phrase: '{phrase}' | Command: '{cmd}'")
+            logger.info("wake engaged: phrase=%r cmd=%r", phrase, cmd)
             if server_loop and server_loop.is_running():
                 future = asyncio.run_coroutine_threadsafe(
                     process_wake_event(phrase, cmd),
@@ -538,6 +635,32 @@ def wake_word_listener_thread():
                     print(f"[WAKE PROCESSING EXCEPTION] {exc}")
         except Exception:
             time.sleep(0.5)
+
+
+wake_listener = None
+
+
+def _on_wake():
+    """Fired by the instant wake engine — hand off to the normal wake flow."""
+    if server_loop and server_loop.is_running():
+        asyncio.run_coroutine_threadsafe(process_wake_event("Hey Jarvis", ""), server_loop)
+
+
+def _start_wake():
+    """Prefer the instant openWakeWord engine; fall back to the Whisper loop."""
+    global wake_listener
+    try:
+        from vyra import wake
+        wake_listener = wake.WakeListener(
+            on_wake=_on_wake,
+            enabled_fn=lambda: wake_enabled,
+            pause_fn=lambda: (wake_pause_event.is_set() or is_manual_active),
+        )
+        wake_listener.start()
+        print("[WAKE] Using openWakeWord (instant).")
+    except Exception as exc:
+        print(f"[WAKE] openWakeWord unavailable ({exc}); falling back to Whisper wake.")
+        threading.Thread(target=wake_word_listener_thread, daemon=True).start()
 
 
 async def handle_memory(request):
@@ -673,7 +796,7 @@ async def deliver_startup_greeting():
     else:
         salut = "Welcome back"
 
-    greeting = f"{salut}, boss. {assistant_name} systems online and standing by in your corner."
+    greeting = f"{salut}, Sir. {assistant_name} systems online and standing by in your corner."
 
     await broadcast_ws({
         "type": "speech",
@@ -721,15 +844,19 @@ def create_app():
         server_loop = asyncio.get_running_loop()
         app["broadcaster"] = asyncio.create_task(telemetry_broadcaster())
         app["greeting"] = asyncio.create_task(deliver_startup_greeting())
-        t = threading.Thread(target=wake_word_listener_thread, daemon=True)
-        t.start()
-        app["wake_thread"] = t
+        app["proactive"] = asyncio.create_task(proactive_watcher())
+        svc = reminders.get_service()
+        svc.set_notifier(reminder_notifier)
+        svc.start()
+        _start_wake()
 
     async def cleanup_background_tasks(app):
         if "broadcaster" in app:
             app["broadcaster"].cancel()
         if "greeting" in app:
             app["greeting"].cancel()
+        if "proactive" in app:
+            app["proactive"].cancel()
         wake_pause_event.set()
         wake_stop_event.set()
 

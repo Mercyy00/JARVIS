@@ -630,6 +630,254 @@ def see_screen(memory, question: str = "") -> str:
         return f"Error analyzing screen: {exc}"
 
 
+def generate_image(memory, prompt: str) -> str:
+    """Generate an image from a text prompt by driving the logged-in browser
+    (Gemini web). Opens the saved image on success."""
+    from . import browser
+    result = browser.generate_image(prompt)
+    if result and os.path.exists(result):
+        try:
+            os.startfile(result)  # open in the default Windows image viewer
+        except Exception:
+            pass
+        return f"Done, Sir — generated your image and opened it: {os.path.basename(result)}."
+    return result  # a readable error/status string from the browser agent
+
+
+def _parse_at(at_str: str, now):
+    from datetime import datetime, timedelta
+    s = (at_str or "").strip().lower().replace(" ", "")
+    for fmt in ("%H:%M", "%I:%M%p", "%I%p"):
+        try:
+            t = datetime.strptime(s, fmt).time()
+        except ValueError:
+            continue
+        fire = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+        if fire <= now:
+            fire = fire + timedelta(days=1)
+        return fire
+    return None
+
+
+def set_reminder(memory, text: str, minutes: float = None, at: str = None) -> str:
+    """Schedule a spoken reminder, either in N minutes or at a clock time."""
+    from datetime import datetime, timedelta
+    from .reminders import get_service
+    now = datetime.now()
+    if at:
+        fire = _parse_at(at, now)
+        if not fire:
+            return f"I couldn't read the time '{at}'. Try like '17:30' or '5pm'."
+    elif minutes is not None:
+        try:
+            fire = now + timedelta(minutes=float(minutes))
+        except (ValueError, TypeError):
+            return "Tell me how many minutes, Sir."
+    else:
+        return "When should I remind you — a time, or how many minutes?"
+    get_service().add(text, fire.timestamp())
+    when = fire.strftime("%H:%M") if fire.date() == now.date() else fire.strftime("%a %H:%M")
+    return f"Reminder set for {when}, Sir — \"{text}\"."
+
+
+def list_reminders(memory) -> str:
+    from datetime import datetime
+    from .reminders import get_service
+    items = get_service().list_pending()
+    if not items:
+        return "No reminders set, Sir."
+    lines = ["Pending reminders:"]
+    for i in items:
+        when = datetime.fromtimestamp(i["fire_ts"]).strftime("%a %H:%M")
+        lines.append(f"  - {when}: {i['text']}")
+    return "\n".join(lines)
+
+
+def cancel_reminder(memory, which: str) -> str:
+    from .reminders import get_service
+    n = get_service().cancel(which)
+    return f"Cancelled {n} reminder(s)." if n else f"No matching reminder for '{which}'."
+
+
+def _data_dir(sub: str) -> str:
+    d = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", sub)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def save_screenshot(memory, open_after: bool = True) -> str:
+    """Capture the whole screen to a PNG under data/screenshots and open it."""
+    try:
+        from PIL import ImageGrab
+    except ImportError:
+        return "Pillow isn't installed for screenshots."
+    path = os.path.join(_data_dir("screenshots"), f"shot_{datetime.now():%Y%m%d_%H%M%S}.png")
+    try:
+        ImageGrab.grab().save(path)
+    except Exception as exc:
+        return f"Couldn't capture the screen: {exc}"
+    if open_after:
+        try:
+            os.startfile(path)
+        except Exception:
+            pass
+    return f"Screenshot saved to {path}."
+
+
+def lock_pc(memory) -> str:
+    try:
+        ctypes.windll.user32.LockWorkStation()
+        return "Locked the workstation, Sir."
+    except Exception as exc:
+        return f"Couldn't lock the PC: {exc}"
+
+
+def sleep_pc(memory) -> str:
+    try:
+        subprocess.Popen(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"])
+        return "Putting the system to sleep, Sir."
+    except Exception as exc:
+        return f"Couldn't sleep the system: {exc}"
+
+
+def set_brightness(memory, level: int) -> str:
+    try:
+        level = max(0, min(int(level), 100))
+    except (ValueError, TypeError):
+        return "Give me a brightness level from 0 to 100."
+    ps = f"(Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,{level})"
+    res = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True)
+    if res.returncode == 0:
+        return f"Set screen brightness to {level}%."
+    return f"Couldn't set brightness (laptop display only): {res.stderr.strip()}"
+
+
+def get_system_info(memory) -> str:
+    import platform
+    try:
+        uptime = time.time() - psutil.boot_time()
+        hrs, mins = int(uptime // 3600), int((uptime % 3600) // 60)
+        vmem = psutil.virtual_memory()
+        cpu = psutil.cpu_percent(interval=0.3)
+        return (f"{platform.system()} {platform.release()}, {cpu:.0f}% CPU, "
+                f"{vmem.percent:.0f}% of {vmem.total / 1024**3:.1f} GB RAM in use, "
+                f"up {hrs}h {mins}m.")
+    except Exception as exc:
+        return f"Couldn't read system info: {exc}"
+
+
+def type_text(memory, text: str) -> str:
+    """Type text into the currently focused window by pasting it (robust for any characters)."""
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command", "$input | Set-Clipboard"],
+                       input=text, text=True, capture_output=True, timeout=5)
+        subprocess.run(["powershell", "-NoProfile", "-Command",
+                        "$w = New-Object -ComObject wscript.shell; Start-Sleep -Milliseconds 200; $w.SendKeys('^v')"],
+                       capture_output=True)
+        preview = text[:60] + ("..." if len(text) > 60 else "")
+        return f"Typed into the active window: \"{preview}\""
+    except Exception as exc:
+        return f"Couldn't type text: {exc}"
+
+
+def read_file(memory, path: str, max_chars: int = 4000) -> str:
+    """Read a text file so FRIDAY can look at and discuss it."""
+    full = _resolve_path(path)
+    if not os.path.exists(full):
+        return f"There's no file at {full}."
+    if os.path.isdir(full):
+        return f"'{full}' is a folder — use list_folder for that."
+    try:
+        with open(full, "r", encoding="utf-8", errors="replace") as fh:
+            data = fh.read(max_chars + 1)
+    except Exception as exc:
+        return f"Couldn't read it: {exc}"
+    truncated = len(data) > max_chars
+    return f"Contents of {os.path.basename(full)}:\n{data[:max_chars]}" + ("\n...(truncated)" if truncated else "")
+
+
+def send_to_claude(memory, prompt: str) -> str:
+    """Copy a prepared prompt to the clipboard and open Claude so Jay can paste it."""
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command", "$input | Set-Clipboard"],
+                       input=prompt, text=True, capture_output=True, timeout=5)
+    except Exception:
+        pass
+    _open_in_browser("https://claude.ai/new")
+    return "Prompt's written and copied to your clipboard, Sir — Claude's open, just paste with Ctrl+V."
+
+
+def deep_think(memory, question: str) -> str:
+    """Consult a stronger model for a hard question or careful writing."""
+    cfg = _VISION_CONFIG
+    if not cfg:
+        try:
+            from .config import load_config
+            cfg = load_config().get("llm")
+        except Exception:
+            cfg = None
+    if not cfg or not cfg.get("api_key"):
+        return "I can't reach my deep-thinking model right now."
+    try:
+        from .llm import make_client
+        deep = dict(cfg)
+        deep["model"] = cfg.get("deep_model") or cfg.get("model")
+        client = make_client({"llm": deep})
+        resp = client.complete(
+            "You are a sharp expert advisor. Think carefully, then answer concisely and usefully.",
+            [{"role": "user", "content": question}], [],
+        )
+        return (resp.text or "").strip() or "I turned it over but came up blank."
+    except Exception as exc:
+        return f"Deep-think failed: {exc}"
+
+
+def daily_briefing(memory) -> str:
+    """A short spoken briefing: greeting, date/time, reminders, battery."""
+    now = datetime.now()
+    h = now.hour
+    salut = "Good morning" if 4 <= h < 12 else "Good afternoon" if 12 <= h < 17 else "Good evening"
+    parts = [f"{salut}, Sir.", now.strftime("It's %A, %d %B, %H:%M.")]
+    try:
+        from . import reminders
+        items = reminders.get_service().list_pending()
+        if items:
+            parts.append(f"You've got {len(items)} reminder{'s' if len(items) != 1 else ''} lined up.")
+    except Exception:
+        pass
+    try:
+        b = psutil.sensors_battery()
+        if b is not None:
+            parts.append(f"Battery's at {round(b.percent)}%{' and charging' if b.power_plugged else ''}.")
+    except Exception:
+        pass
+    return " ".join(parts)
+
+
+def run_routine(memory, name: str) -> str:
+    """Run a named multi-step routine (e.g. 'start my day', 'focus mode', 'wind down')."""
+    from . import routines
+    steps = routines.get_steps(name)
+    if steps is None:
+        return f"No routine called '{name}', Sir. I've got: {', '.join(routines.list_names())}."
+    outputs = []
+    for step in steps:
+        sk = step.get("skill")
+        if not sk:
+            continue
+        outputs.append(execute(sk, step.get("args", {}), memory))
+    # If the routine included a briefing, lead with it so Rusty speaks something useful.
+    brief = next((o for o in outputs if o and o.startswith(("Good morning", "Good afternoon", "Good evening"))), None)
+    if brief:
+        return brief
+    return f"Done, Sir — {name} is set."
+
+
+def list_routines(memory) -> str:
+    from . import routines
+    return "Routines ready to go: " + ", ".join(routines.list_names()) + "."
+
+
 SKILLS = [
     {"name": "open_app", "fn": open_app, "description": "Open/launch an application (e.g. brave, chrome, notepad, calculator, explorer).",
      "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "App name"}}, "required": ["name"]}},
@@ -667,6 +915,38 @@ SKILLS = [
      "parameters": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to copy to clipboard"}}, "required": ["text"]}},
     {"name": "see_screen", "fn": see_screen, "description": "Inspect and analyze what is currently visible on the user's screen or open windows using AI vision.",
      "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "Specific question or request about what is on screen"}}, "required": []}},
+    {"name": "generate_image", "fn": generate_image, "description": "Generate / create / draw a picture or image from a text description, using the browser (Gemini web). Use whenever Jay asks to make, create, draw, or generate an image, picture, art, or wallpaper.",
+     "parameters": {"type": "object", "properties": {"prompt": {"type": "string", "description": "Detailed description of the image to generate"}}, "required": ["prompt"]}},
+    {"name": "set_reminder", "fn": set_reminder, "description": "Set a timed reminder that FRIDAY will speak aloud when due. Give either minutes (relative, e.g. 'in 20 minutes') or at (a clock time like '17:30' or '5pm').",
+     "parameters": {"type": "object", "properties": {"text": {"type": "string", "description": "What to remind Jay about"}, "minutes": {"type": "number", "description": "Fire this many minutes from now"}, "at": {"type": "string", "description": "Clock time to fire at, e.g. '17:30' or '5pm'"}}, "required": ["text"]}},
+    {"name": "list_reminders", "fn": list_reminders, "description": "List all pending reminders.",
+     "parameters": {"type": "object", "properties": {}, "required": []}},
+    {"name": "cancel_reminder", "fn": cancel_reminder, "description": "Cancel a pending reminder by its id or by a word from its text.",
+     "parameters": {"type": "object", "properties": {"which": {"type": "string", "description": "Reminder id or a substring of its text"}}, "required": ["which"]}},
+    {"name": "save_screenshot", "fn": save_screenshot, "description": "Capture a screenshot of the whole screen, save it to data/screenshots, and open it.",
+     "parameters": {"type": "object", "properties": {"open_after": {"type": "boolean", "description": "Open the image after saving (default true)"}}, "required": []}},
+    {"name": "lock_pc", "fn": lock_pc, "description": "Lock the Windows workstation (lock screen).",
+     "parameters": {"type": "object", "properties": {}, "required": []}},
+    {"name": "sleep_pc", "fn": sleep_pc, "description": "Put the computer to sleep. Only when Jay clearly asks to sleep/suspend the PC.",
+     "parameters": {"type": "object", "properties": {}, "required": []}},
+    {"name": "set_brightness", "fn": set_brightness, "description": "Set the laptop screen brightness to a level from 0 to 100 percent.",
+     "parameters": {"type": "object", "properties": {"level": {"type": "integer", "description": "Brightness percentage 0-100"}}, "required": ["level"]}},
+    {"name": "get_system_info", "fn": get_system_info, "description": "Report OS, CPU load, RAM usage, and system uptime.",
+     "parameters": {"type": "object", "properties": {}, "required": []}},
+    {"name": "type_text", "fn": type_text, "description": "Type/paste the given text into whatever window is currently focused.",
+     "parameters": {"type": "object", "properties": {"text": {"type": "string", "description": "The text to type into the active window"}}, "required": ["text"]}},
+    {"name": "read_file", "fn": read_file, "description": "Read a text/code file so you can look at it and discuss or review it (e.g. downloads/notes.txt or a full path).",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "File path or shortcut"}}, "required": ["path"]}},
+    {"name": "send_to_claude", "fn": send_to_claude, "description": "After writing a well-structured prompt for Claude, call this with the full prompt text — it copies it to the clipboard and opens Claude so Jay can paste it.",
+     "parameters": {"type": "object", "properties": {"prompt": {"type": "string", "description": "The complete prompt text to hand to Claude"}}, "required": ["prompt"]}},
+    {"name": "deep_think", "fn": deep_think, "description": "Consult a stronger model for a hard question, tricky reasoning, or careful writing, then relay the answer in your own voice.",
+     "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "The question or task to think hard about"}}, "required": ["question"]}},
+    {"name": "daily_briefing", "fn": daily_briefing, "description": "Give Jay a short spoken daily briefing (greeting, date/time, pending reminders, battery). Use for 'good morning', 'brief me', 'what's my day'.",
+     "parameters": {"type": "object", "properties": {}, "required": []}},
+    {"name": "run_routine", "fn": run_routine, "description": "Run a saved multi-step routine by name — e.g. 'start my day', 'focus mode', 'wind down'. Use whenever Jay names a routine or says things like 'start my day' / 'let's focus' / 'wind down'.",
+     "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "The routine name"}}, "required": ["name"]}},
+    {"name": "list_routines", "fn": list_routines, "description": "List the available routines.",
+     "parameters": {"type": "object", "properties": {}, "required": []}},
     {"name": "delete_file", "fn": delete_file, "description": "Delete a file. By default, safely moves it to the Windows Recycle Bin so it can be restored.",
      "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "File path or shortcut (e.g. downloads/test.txt)"}, "permanent": {"type": "boolean", "description": "If true, permanently delete instead of moving to Recycle Bin (default false)"}}, "required": ["path"]}},
     {"name": "delete_folder", "fn": delete_folder, "description": "Delete a folder. By default, safely moves it to the Windows Recycle Bin.",

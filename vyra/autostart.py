@@ -22,8 +22,23 @@ if not PYTHONW_EXE.exists():
 STARTUP_DIR = Path(os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"))
 DESKTOP_DIR = Path(os.path.expandvars(r"%USERPROFILE%\Desktop"))
 
-STARTUP_SHORTCUT = STARTUP_DIR / "FRIDAY AI.lnk"
-DESKTOP_SHORTCUT = DESKTOP_DIR / "FRIDAY AI.lnk"
+STARTUP_SHORTCUT = STARTUP_DIR / "Rusty AI.lnk"
+DESKTOP_SHORTCUT = DESKTOP_DIR / "Rusty AI.lnk"
+_OLD_SHORTCUTS = [STARTUP_DIR / "FRIDAY AI.lnk", DESKTOP_DIR / "FRIDAY AI.lnk"]
+
+
+def _disable_startup_delay():
+    """Remove Windows Explorer's artificial delay on Startup-folder apps so Rusty
+    launches the moment you log in instead of ~10s later. Reversible (HKCU only)."""
+    try:
+        subprocess.run(
+            ["reg", "add",
+             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize",
+             "/v", "StartupDelayInMSec", "/t", "REG_DWORD", "/d", "0", "/f"],
+            capture_output=True, text=True,
+        )
+    except Exception as exc:
+        print(f"[AUTOSTART] Could not clear startup delay: {exc}")
 
 
 def _create_windows_shortcut(
@@ -76,13 +91,20 @@ def is_autostart_enabled() -> bool:
 
 
 def enable_autostart() -> bool:
-    """Enable FRIDAY auto-start on Windows boot via Startup folder."""
+    """Enable Rusty auto-start at logon, as early as possible."""
+    _disable_startup_delay()
+    for old in _OLD_SHORTCUTS:
+        try:
+            if old.exists():
+                old.unlink()
+        except Exception:
+            pass
     ok = _create_windows_shortcut(
         link_path=STARTUP_SHORTCUT,
         target_path=str(PYTHONW_EXE),
         arguments="-m vyra.gui_server --startup",
         working_dir=str(ROOT),
-        description="FRIDAY Autonomous AI Partner (Starts in corner on boot)"
+        description="Rusty — autonomous AI partner (starts in the corner at logon)"
     )
     return ok
 
@@ -105,7 +127,7 @@ def create_desktop_shortcut() -> bool:
         target_path=str(PYTHONW_EXE),
         arguments="-m vyra.gui_server",
         working_dir=str(ROOT),
-        description="Launch FRIDAY AI Desktop HUD"
+        description="Launch Rusty AI Desktop HUD"
     )
     return ok
 

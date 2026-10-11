@@ -99,7 +99,8 @@ class OpenAICompatAdapter:
         effort = llm.get("reasoning_effort")
         self.reasoning_effort = effort if effort in ("low", "medium", "high") else None
         base_url = llm.get("base_url") or DEFAULT_BASE_URLS.get(provider)
-        self.client = OpenAI(api_key=llm["api_key"], base_url=base_url)
+        # Fail fast instead of hanging if the endpoint is slow or overloaded (503).
+        self.client = OpenAI(api_key=llm["api_key"], base_url=base_url, timeout=30.0, max_retries=1)
 
     def _tools(self, tools):
         return [{"type": "function", "function": {

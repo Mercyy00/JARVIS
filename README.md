@@ -59,6 +59,8 @@ for the current name.)
 - Google search, open any URL, open YouTube (or search it)
 - Save named links and reopen them — perfect for Google Meet links
 - Remember lasting facts about you, keep notes, know the date/time
+- Timed spoken reminders ("remind me in 20 minutes to…", "remind me at 5pm")
+- Lock or sleep the PC, set screen brightness, save a screenshot, report system info, type text into the active window
 
 Just talk to her: *"save my standup meet as https://meet.google.com/xxx"*, then
 later *"open my standup meet"*.
@@ -97,6 +99,31 @@ Speech is transcribed locally (private); only the brain and the voice synthesis
 go online.
 
 
+## Generate images (Phase 4 — browser automation)
+
+VYRA can create images with **no API key or quota** by driving a real,
+logged-in browser (Google Gemini web). Install the extra once and sign in a
+single time — the login is saved to a private profile under `data/`:
+
+```bash
+pip install -r requirements-browser.txt
+python -m playwright install chromium
+python -m vyra.browser --login
+```
+
+Then just ask her: *"make an image of a neon cyberpunk fox"*. She drives the
+browser, saves the result to `data/generated_images/`, and opens it. Test it
+directly with:
+
+```bash
+python -m vyra.browser --test "a neon cyberpunk fox"
+```
+
+This path depends on Gemini's web UI, so it's inherently more fragile than the
+rest — selectors live at the top of `vyra/browser.py` with fallbacks if the UI
+changes.
+
+
 ## How she remembers
 
 Stored as plain files under `data/` (gitignored, private to you):
@@ -126,5 +153,5 @@ JARVIS/
 1. ✅ Text brain + memory + core skills (provider-swappable)
 2. ✅ Voice — local Whisper ears + Edge-TTS voice + "VYRA" wake word *(untested; needs a mic)*
 3. 🔜 Full PC control + Brave/YouTube/Meet + GUI automation
-4. 🔜 Browser magic — image generation + driving other apps
+4. 🟡 Browser magic — image generation via logged-in Gemini web *(built; needs a one-time `--login` and a live test)*
 5. 🔜 Autostart on logon

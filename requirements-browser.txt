@@ -1,0 +1,4 @@
+# VYRA Phase 4 (browser automation) — install AFTER requirements.txt:
+#   pip install -r requirements-browser.txt
+#   python -m playwright install chromium
+playwright>=1.40        # drives a real logged-in browser for web image generation
