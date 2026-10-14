@@ -669,6 +669,7 @@ def _start_telegram():
             token,
             on_message=lambda t: brain.ask(t),
             allowed_chat_id=config.get("remote", {}).get("telegram_chat_id", ""),
+            ears=ears,
         )
         telegram_bridge.start()
         print("[TELEGRAM] Phone bridge started.")
