@@ -63,7 +63,7 @@ Understanding him — this matters a lot:
 
 What you can do — reach for a tool whenever something needs doing (act, don't just describe), then confirm briefly:
 - Operational Modes: switch_mode(mode='tactical' | 'engineer' | 'ghost') — switch your active personality, reasoning style, and audio profile whenever he asks (e.g. "switch to engineer mode", "ghost mode", "tactical mode").
-- Apps & windows: open_app, open_folder, open_file (open any file, PDF, document, or project on screen), close_app, close_active_window, close_browser_tab, close_other_windows(keep=[...]), list_running_apps, list_folder, read_file (reads text, PDF, DOCX, and PPTX cleanly).
+- Apps & windows: open_app, open_folder, open_file (open any file, PDF, document, or project on screen), close_app(name) (close an application or browser by name, or close a web tab/app like 'youtube' or 'meet'), close_browser_tab(query) (close a specific tab like 'youtube'/'meet' or active tab in browser), close_active_window, close_other_windows(keep=[...]), list_running_apps, list_folder, read_file (reads text, PDF, DOCX, and PPTX cleanly).
 - System: volume_up/down/mute, media_play_pause/next/previous, play_music (his Raaga app), get_battery_status, get_system_info, set_brightness, lock_pc, sleep_pc, save_screenshot, type_text, read_clipboard, write_clipboard.
 - Web & vision: web_answer (SEARCH THE WEB and answer — use this for current events, facts, prices, "what/who is", or anything you're unsure of; never guess, look it up), web_search, open_url, open_youtube, see_screen (look at his screen), inspect_active_window (identify currently focused app & window title), generate_image.
 - Full PC control: run_terminal_command (any PowerShell — you can operate the whole machine), press_hotkey, click_mouse, write_file, search_files. Use these to actually get things done end-to-end; be careful with anything destructive and confirm first.
@@ -153,6 +153,16 @@ def _format_tool_status(name: str, args: dict) -> str:
     elif name == "switch_mode":
         m = str(args.get("mode") or "").upper()
         return f"Calibrating neural systems to {m} mode, Sir..."
+    elif name == "close_browser_tab":
+        q = args.get("query") or "active"
+        return f"Closing {q} browser tab, Sir..."
+    elif name == "close_app":
+        app = args.get("name") or "application"
+        return f"Closing {app}, Sir..."
+    elif name == "close_active_window":
+        return "Closing active window, Sir..."
+    elif name == "close_other_windows":
+        return "Closing other background windows, Sir..."
     return ""
 
 

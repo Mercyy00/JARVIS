@@ -218,77 +218,251 @@ def is_path_safe(resolved_path: str) -> bool:
     return True
 
 
-def _get_user_windows() -> list[dict]:
+KNOWN_BROWSERS = ("brave.exe", "chrome.exe", "msedge.exe", "firefox.exe", "zen.exe", "opera.exe", "vivaldi.exe", "arc.exe")
+
+
+def _attach_input_desktop():
+    """Synchronize calling thread with the Windows interactive user desktop."""
     try:
-        out = subprocess.check_output(['tasklist', '/v', '/fo', 'csv'], text=True, errors='replace', timeout=8)
+        user32 = ctypes.windll.user32
+        hdesk = user32.OpenInputDesktop(0, False, 0x01FF)
+        if hdesk:
+            user32.SetThreadDesktop(hdesk)
+            return hdesk
     except Exception:
-        try:
-            out = subprocess.check_output(['tasklist', '/fo', 'csv', '/fi', 'SESSIONNAME eq Console'], text=True, errors='replace', timeout=5)
-        except Exception:
-            return []
-    reader = csv.DictReader(io.StringIO(out))
-    
+        pass
+    return None
+
+
+def _get_user_windows() -> list[dict]:
+    """Blazingly fast, native Win32 window enumeration. Returns real user windows with HWNDs and titles."""
+    user32 = ctypes.windll.user32
+    hdesk = _attach_input_desktop()
+    windows = []
     current_pid = os.getpid()
-    user_windows = []
-    seen_pids = set()
 
-    for row in reader:
-        proc_name = (row.get('Image Name') or '').strip()
-        pid_str = (row.get('PID') or '').strip()
-        title = (row.get('Window Title') or '').strip()
+    from ctypes import wintypes
+    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
-        if not pid_str.isdigit():
-            continue
-        pid = int(pid_str)
+    def callback(hwnd, lparam):
+        try:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length == 0:
+                return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            title = buf.value.strip()
+            if not title:
+                return True
 
-        if pid == current_pid or pid in seen_pids:
-            continue
-        if proc_name.lower() in SYSTEM_PROTECTED:
-            continue
-        if title.lower() in IGNORE_TITLES:
-            continue
-        if "stark industries hud" in title.lower() or "vyra" in title.lower():
-            continue
+            title_lower = title.lower()
+            if title_lower in IGNORE_TITLES:
+                return True
+            if "stark industries hud" in title_lower or "vyra" in title_lower or "rusty hud" in title_lower:
+                return True
 
-        seen_pids.add(pid)
-        user_windows.append({
-            "pid": pid,
-            "proc": proc_name,
-            "title": title
-        })
-    return user_windows
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value == current_pid:
+                return True
+
+            proc_name = "unknown"
+            try:
+                proc_name = psutil.Process(pid.value).name().lower()
+            except Exception:
+                pass
+
+            if proc_name in SYSTEM_PROTECTED:
+                return True
+
+            windows.append({
+                "hwnd": hwnd,
+                "pid": pid.value,
+                "proc": proc_name,
+                "title": title
+            })
+        except Exception:
+            pass
+        return True
+
+    cb = WNDENUMPROC(callback)
+    if hdesk:
+        try:
+            user32.EnumDesktopWindows(hdesk, cb, 0)
+        finally:
+            user32.CloseDesktop(hdesk)
+    else:
+        user32.EnumWindows(cb, 0)
+
+    return windows
+
+
+def focus_window(hwnd: int) -> bool:
+    """Bring the target window to the foreground with full input focus."""
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        _attach_input_desktop()
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+
+        cur_tid = kernel32.GetCurrentThreadId()
+        fg_hwnd = user32.GetForegroundWindow()
+        fg_tid = user32.GetWindowThreadProcessId(fg_hwnd, None) if fg_hwnd else 0
+        tgt_tid = user32.GetWindowThreadProcessId(hwnd, None)
+
+        if fg_tid and fg_tid != cur_tid:
+            user32.AttachThreadInput(cur_tid, fg_tid, True)
+        if tgt_tid and tgt_tid != cur_tid:
+            user32.AttachThreadInput(cur_tid, tgt_tid, True)
+
+        # Alt key tap trick bypasses Windows SetForegroundWindow restrictions
+        user32.keybd_event(0x12, 0, 0, 0)
+        user32.SetForegroundWindow(hwnd)
+        user32.BringWindowToTop(hwnd)
+        user32.keybd_event(0x12, 0, 0x0002, 0)
+
+        if fg_tid and fg_tid != cur_tid:
+            user32.AttachThreadInput(cur_tid, fg_tid, False)
+        if tgt_tid and tgt_tid != cur_tid:
+            user32.AttachThreadInput(cur_tid, tgt_tid, False)
+
+        time.sleep(0.08)
+        return True
+    except Exception:
+        return False
+
+
+def _send_ctrl_w():
+    """Send Ctrl+W key combination using native Win32 keybd_event."""
+    user32 = ctypes.windll.user32
+    VK_CONTROL = 0x11
+    VK_W = 0x57
+    KEYEVENTF_KEYUP = 0x0002
+    user32.keybd_event(VK_CONTROL, 0, 0, 0)
+    user32.keybd_event(VK_W, 0, 0, 0)
+    time.sleep(0.05)
+    user32.keybd_event(VK_W, 0, KEYEVENTF_KEYUP, 0)
+    user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+
+
+def close_browser_tab(memory, query: str = "") -> str:
+    """Close a specific tab by title/website (or the active tab) in the browser (Ctrl+W)."""
+    wins = _get_user_windows()
+    browser_wins = [w for w in wins if any(b in w['proc'] for b in KNOWN_BROWSERS)]
+    if not browser_wins:
+        return "No active browser window found to close tabs from, Sir."
+
+    target_win = None
+    q_clean = query.lower().strip() if query else ""
+    for prefix in ("the ", "a ", "my "):
+        if q_clean.startswith(prefix):
+            q_clean = q_clean[len(prefix):].strip()
+    if q_clean.endswith(" tab") or q_clean.endswith(" page"):
+        q_clean = q_clean.rsplit(" ", 1)[0].strip()
+
+    if q_clean:
+        for w in browser_wins:
+            if q_clean in w['title'].lower():
+                target_win = w
+                break
+        if not target_win:
+            for w in wins:
+                if q_clean in w['title'].lower():
+                    target_win = w
+                    break
+
+    if not target_win:
+        target_win = browser_wins[0]
+
+    # Focus the browser window and send Ctrl+W
+    focus_window(target_win['hwnd'])
+    time.sleep(0.12)
+    _send_ctrl_w()
+
+    b_name = target_win['proc'].replace('.exe', '').capitalize()
+    if q_clean and q_clean in target_win['title'].lower():
+        return f"Closed the '{target_win['title']}' tab in {b_name}, Sir."
+    return f"Closed the active tab in {b_name}, Sir."
 
 
 def close_app(memory, name: str) -> str:
-    """Close/terminate an application by name or window title."""
-    name_clean = name.lower().strip()
-    target = APP_ALIASES.get(name_clean, name_clean)
-    closed = []
-    
-    # Check running processes
-    for p in psutil.process_iter(['pid', 'name']):
-        try:
-            p_name = p.info['name'].lower()
-            if target in p_name or name_clean in p_name or (target + ".exe") == p_name:
-                p.terminate()
-                closed.append(p.info['name'])
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
+    """Close/terminate an application or window by name or window title."""
+    name_clean = (name or "").lower().strip()
+    for prefix in ("the ", "a "):
+        if name_clean.startswith(prefix):
+            name_clean = name_clean[len(prefix):].strip()
+    if name_clean.endswith(" app") or name_clean.endswith(" application"):
+        name_clean = name_clean.rsplit(" ", 1)[0].strip()
 
-    # If not found directly by process name, check open window titles
-    if not closed:
-        for w in _get_user_windows():
-            if name_clean in w['title'].lower() or name_clean in w['proc'].lower():
-                try:
-                    p = psutil.Process(w['pid'])
-                    p.terminate()
-                    closed.append(w['proc'])
-                except Exception:
-                    pass
+    user32 = ctypes.windll.user32
+    windows = _get_user_windows()
 
-    if closed:
-        return f"Closed {len(closed)} instance(s) of {name}."
-    return f"Could not find any running window or process matching '{name}'."
+    # 1. If user asked to close a website/web-app (e.g. "youtube", "meet", "google meet", "netflix", "whatsapp")
+    # or the name matches the title of an open browser window, close that tab!
+    browser_wins = [w for w in windows if any(b in w['proc'] for b in KNOWN_BROWSERS)]
+    if browser_wins and name_clean not in ("browser", "brave", "chrome", "edge", "firefox", "zen"):
+        for bw in browser_wins:
+            if name_clean in bw['title'].lower():
+                return close_browser_tab(memory, query=name_clean)
+
+    # 2. If user asked for generic "browser", find whichever browser actually has an active window open
+    if name_clean in ("browser", "web browser", "internet"):
+        if browser_wins:
+            target_proc = browser_wins[0]['proc']
+            for bw in browser_wins:
+                if bw['proc'] == target_proc:
+                    user32.PostMessageW(bw['hwnd'], 0x0010, 0, 0)
+            time.sleep(0.2)
+            subprocess.run(["taskkill", "/F", "/T", "/IM", target_proc], capture_output=True)
+            b_name = target_proc.replace('.exe', '').capitalize()
+            return f"Closed {b_name} browser, Sir."
+        for b in KNOWN_BROWSERS:
+            r = subprocess.run(["taskkill", "/F", "/T", "/IM", b], capture_output=True)
+            if r.returncode == 0:
+                b_name = b.replace('.exe', '').capitalize()
+                return f"Closed background {b_name} browser processes, Sir."
+        return "No browser was running, Sir."
+
+    # 3. Check open windows by title or process
+    target_alias = APP_ALIASES.get(name_clean, name_clean)
+    matching_wins = [
+        w for w in windows 
+        if name_clean in w['title'].lower() 
+        or name_clean in w['proc'].lower() 
+        or target_alias in w['proc'].lower()
+    ]
+
+    if matching_wins:
+        procs_to_kill = set()
+        for w in matching_wins:
+            user32.PostMessageW(w['hwnd'], 0x0010, 0, 0)  # WM_CLOSE
+            procs_to_kill.add(w['proc'])
+        time.sleep(0.25)
+
+        for p_name in procs_to_kill:
+            subprocess.run(["taskkill", "/F", "/T", "/IM", p_name], capture_output=True)
+
+        return f"Closed {len(matching_wins)} window(s) for '{name}', Sir."
+
+    # 4. Fallback: check running processes if no open window matched
+    target_exe = target_alias if target_alias.endswith(".exe") else f"{target_alias}.exe"
+    r = subprocess.run(["taskkill", "/F", "/T", "/IM", target_exe], capture_output=True)
+    if r.returncode == 0:
+        return f"Closed process {target_alias}, Sir."
+
+    # If user asked for chrome, but brave was running (or vice-versa), close the active browser
+    if name_clean == "chrome" and browser_wins:
+        b_name = browser_wins[0]['proc']
+        for bw in browser_wins:
+            user32.PostMessageW(bw['hwnd'], 0x0010, 0, 0)
+        time.sleep(0.2)
+        subprocess.run(["taskkill", "/F", "/T", "/IM", b_name], capture_output=True)
+        return f"Chrome was not open, but I closed your active {b_name.replace('.exe','').capitalize()} browser, Sir."
+
+    return f"I couldn't find any running window or process matching '{name}', Sir."
 
 
 def close_other_windows(memory, keep: list[str]) -> str:
@@ -297,13 +471,13 @@ def close_other_windows(memory, keep: list[str]) -> str:
         keep = [k.strip() for k in keep.split(",")]
     
     keep_lower = [k.lower().strip() for k in keep]
-    # Expand aliases (e.g. 'browser' matches brave, chrome, zen, edge)
     if any("browser" in k for k in keep_lower):
         keep_lower.extend(["brave", "chrome", "edge", "firefox", "zen", "opera"])
     if any("antigravity" in k for k in keep_lower):
         keep_lower.extend(["antigravity", "cursor", "vscode", "code"])
 
     windows = _get_user_windows()
+    user32 = ctypes.windll.user32
     closed = []
     kept = []
 
@@ -316,8 +490,7 @@ def close_other_windows(memory, keep: list[str]) -> str:
             kept.append(w['proc'])
         else:
             try:
-                p = psutil.Process(w['pid'])
-                p.terminate()
+                user32.PostMessageW(w['hwnd'], 0x0010, 0, 0)  # WM_CLOSE
                 closed.append(w['proc'])
             except Exception:
                 pass
@@ -334,22 +507,25 @@ def close_other_windows(memory, keep: list[str]) -> str:
     return " ".join(msg_parts)
 
 
-def close_browser_tab(memory) -> str:
-    """Close the active tab in the browser (Ctrl+W)."""
-    subprocess.run(
-        ["powershell", "-NoProfile", "-Command", "$wshell = New-Object -ComObject wscript.shell; $wshell.SendKeys('^w')"],
-        capture_output=True
-    )
-    return "Closed the active browser tab."
-
-
 def close_active_window(memory) -> str:
-    """Close the currently active window (Alt+F4)."""
+    """Close the currently active window (WM_CLOSE / Alt+F4)."""
+    user32 = ctypes.windll.user32
+    _attach_input_desktop()
+    hwnd = user32.GetForegroundWindow()
+    if hwnd:
+        length = user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        title = buf.value.strip()
+
+        user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+        return f"Closed the active window ('{title or 'Window'}'), Sir."
+
     subprocess.run(
         ["powershell", "-NoProfile", "-Command", "$wshell = New-Object -ComObject wscript.shell; $wshell.SendKeys('%{F4}')"],
         capture_output=True
     )
-    return "Closed the active window."
+    return "Closed the active window, Sir."
 
 
 def list_running_apps(memory) -> str:
@@ -1114,6 +1290,7 @@ def inspect_active_window(memory) -> str:
     """Identify which application and document window is currently active/focused on screen."""
     try:
         user32 = ctypes.windll.user32
+        _attach_input_desktop()
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
             return "No active foreground window detected, Sir."
@@ -1498,12 +1675,12 @@ SKILLS = [
      "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "App name"}}, "required": ["name"]}},
     {"name": "open_folder", "fn": open_folder, "description": "Open a folder in File Explorer. Accepts a full path or a shortcut: downloads, documents, desktop, pictures, home.",
      "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
-    {"name": "close_app", "fn": close_app, "description": "Close/terminate an application by name or window title (e.g. notepad, chrome, brave, spotify, calculator).",
-     "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Application or process name"}}, "required": ["name"]}},
+    {"name": "close_app", "fn": close_app, "description": "Close/terminate an application or window (e.g. brave, chrome, browser, youtube, word, notepad, spotify). If given a website/tab name like 'youtube' or 'meet', it automatically closes that tab in the active browser.",
+     "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Application, process, or website name to close (e.g. 'browser', 'brave', 'chrome', 'youtube', 'word')"}}, "required": ["name"]}},
     {"name": "close_other_windows", "fn": close_other_windows, "description": "Close all open user application windows EXCEPT the ones specified in keep (e.g. keep=['browser', 'antigravity']).",
      "parameters": {"type": "object", "properties": {"keep": {"type": "array", "items": {"type": "string"}, "description": "List of window titles or app names to keep open"}}, "required": ["keep"]}},
-    {"name": "close_browser_tab", "fn": close_browser_tab, "description": "Close the active tab in the browser (Ctrl+W).",
-     "parameters": {"type": "object", "properties": {}, "required": []}},
+    {"name": "close_browser_tab", "fn": close_browser_tab, "description": "Close a specific tab by title/site (e.g. 'youtube', 'meet', 'google', 'whatsapp') or the active tab in the browser (Ctrl+W). Focuses the browser first.",
+     "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Optional tab title or website name to close (e.g. 'youtube', 'meet', 'reddit')"}}, "required": []}},
     {"name": "close_active_window", "fn": close_active_window, "description": "Close the currently active window (Alt+F4).",
      "parameters": {"type": "object", "properties": {}, "required": []}},
     {"name": "list_running_apps", "fn": list_running_apps, "description": "List all currently open user application windows and running programs.",
