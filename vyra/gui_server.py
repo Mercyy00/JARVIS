@@ -638,6 +638,32 @@ def wake_word_listener_thread():
 
 
 wake_listener = None
+telegram_bridge = None
+
+
+def _start_telegram():
+    """Start the Telegram phone bridge if a bot token is configured.
+    Skipped by default — the headless `vyra.bot_service` owns Telegram so the
+    bot stays on even when the HUD is closed (and the two never double-poll).
+    Set remote.telegram_in_gui=true to run it inside the HUD instead."""
+    global telegram_bridge
+    rc = config.get("remote", {})
+    if not rc.get("telegram_in_gui", False):
+        return
+    token = str(rc.get("telegram_token", "") or "")
+    if not token:
+        return
+    try:
+        from vyra import remote_telegram
+        telegram_bridge = remote_telegram.TelegramBridge(
+            token,
+            on_message=lambda t: brain.ask(t),
+            allowed_chat_id=config.get("remote", {}).get("telegram_chat_id", ""),
+        )
+        telegram_bridge.start()
+        print("[TELEGRAM] Phone bridge started.")
+    except Exception as exc:
+        print(f"[TELEGRAM] failed to start: {exc}")
 
 
 def _on_wake():
@@ -816,8 +842,26 @@ async def deliver_startup_greeting():
         print(f"[STARTUP GREETING NOTICE] {exc}")
 
 
+REMOTE_PIN = str(config.get("remote", {}).get("pin", "") or "")
+
+
+@web.middleware
+async def _auth_middleware(request, handler):
+    """Local (127.0.0.1) requests pass freely; remote/phone requests need the PIN.
+    Keeps the phone gateway usable without exposing full PC control unauthenticated."""
+    peer = request.remote or ""
+    if peer in ("127.0.0.1", "::1", "localhost"):
+        return await handler(request)
+    if not REMOTE_PIN:
+        return web.Response(status=403, text="Remote access disabled. Set remote.pin in config.json.")
+    given = request.query.get("pin") or request.headers.get("X-Rusty-Pin") or ""
+    if given != REMOTE_PIN:
+        return web.Response(status=403, text="Forbidden — wrong or missing PIN.")
+    return await handler(request)
+
+
 def create_app():
-    app = web.Application()
+    app = web.Application(middlewares=[_auth_middleware])
     app.router.add_get("/ws", ws_handler)
     app.router.add_post("/api/chat", handle_chat)
     app.router.add_post("/api/voice/listen", handle_voice_listen)
@@ -849,6 +893,7 @@ def create_app():
         svc.set_notifier(reminder_notifier)
         svc.start()
         _start_wake()
+        _start_telegram()
 
     async def cleanup_background_tasks(app):
         if "broadcaster" in app:
@@ -879,6 +924,20 @@ def launch_browser_app(url: str, width: int = 380, height: int = 600, x: int = 1
         if os.path.exists(exe):
             subprocess.Popen([exe] + flags)
             return True
+    return False
+
+
+def _wait_for_server(host: str, port: int, timeout: float = 25.0) -> bool:
+    """Block until the HTTP server is accepting connections, so the window never
+    opens on a 'connection refused' page during startup."""
+    import socket
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(0.15)
     return False
 
 
@@ -921,15 +980,19 @@ def main():
             def run_server():
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                web.run_app(app, host="127.0.0.1", port=port, print=None)
+                web.run_app(app, host="0.0.0.0", port=port, print=None)
 
             t = threading.Thread(target=run_server, daemon=True)
             t.start()
 
-            print(f"[HUD] Starting VYRA Technical PiP App at {url} (Corner: {win_x}, {win_y})...")
+            # Wait for the server before loading the window (avoids the brief
+            # "127.0.0.1 refused to connect" page on startup).
+            _wait_for_server("127.0.0.1", port)
+
+            print(f"[HUD] Starting Rusty PiP App at {url} (Corner: {win_x}, {win_y})...")
             global _webview_window
             _webview_window = webview.create_window(
-                "VYRA // AI",
+                "Rusty // AI",
                 url,
                 js_api=window_api,
                 width=win_w,
@@ -946,10 +1009,21 @@ def main():
         except Exception as exc:
             print(f"[HUD] Native window notice ({exc}), falling back to app window...")
 
-    # Fallback to browser app window
+    # Fallback to browser app window — start the server first, then open the browser.
+    def run_server_bg():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        web.run_app(app, host="0.0.0.0", port=port, print=None)
+
+    t = threading.Thread(target=run_server_bg, daemon=True)
+    t.start()
+    _wait_for_server("127.0.0.1", port)
     launch_browser_app(url, win_w, win_h, win_x, win_y)
     print(f"[HUD] Running at {url} — press Ctrl+C to terminate.")
-    web.run_app(app, host="127.0.0.1", port=port)
+    try:
+        t.join()
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

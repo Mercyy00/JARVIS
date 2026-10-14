@@ -7,4 +7,7 @@ aiohttp>=3.9.0             # HUD server & WebSockets
 pillow>=10.0.0             # screen vision & capture
 psutil>=5.9.0              # system telemetry, battery, processes
 pywebview>=5.0.0           # optional native borderless desktop window
+python-docx>=1.1.0        # create Word .docx documents
+python-pptx>=1.0.0        # create PowerPoint .pptx decks
+openpyxl>=3.1.0           # create Excel .xlsx spreadsheets
 

@@ -24,7 +24,29 @@ DESKTOP_DIR = Path(os.path.expandvars(r"%USERPROFILE%\Desktop"))
 
 STARTUP_SHORTCUT = STARTUP_DIR / "Rusty AI.lnk"
 DESKTOP_SHORTCUT = DESKTOP_DIR / "Rusty AI.lnk"
+STARTUP_BOT_SHORTCUT = STARTUP_DIR / "Rusty Bot.lnk"
 _OLD_SHORTCUTS = [STARTUP_DIR / "FRIDAY AI.lnk", DESKTOP_DIR / "FRIDAY AI.lnk"]
+
+
+def enable_bot_autostart() -> bool:
+    """Always-on headless Telegram bot at logon (invisible, no window)."""
+    _disable_startup_delay()
+    return _create_windows_shortcut(
+        link_path=STARTUP_BOT_SHORTCUT,
+        target_path=str(PYTHONW_EXE),
+        arguments="-m vyra.bot_service",
+        working_dir=str(ROOT),
+        description="Rusty always-on Telegram bot (headless)",
+    )
+
+
+def disable_bot_autostart() -> bool:
+    try:
+        if STARTUP_BOT_SHORTCUT.exists():
+            STARTUP_BOT_SHORTCUT.unlink()
+        return True
+    except Exception:
+        return False
 
 
 def _disable_startup_delay():

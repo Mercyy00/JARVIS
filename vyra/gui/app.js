@@ -2,7 +2,14 @@
 // Same server contract as before (WS /ws + /api/*), new interface.
 
 const HOST = window.location.host;
-const WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + HOST + '/ws';
+// When opened from the phone, the URL carries ?pin=XXXX — pass it on every request.
+const PIN = new URLSearchParams(location.search).get('pin') || '';
+const WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + HOST + '/ws' + (PIN ? ('?pin=' + encodeURIComponent(PIN)) : '');
+if (PIN) {
+  const _fetch = window.fetch.bind(window);
+  window.fetch = (u, o) => _fetch(
+    (typeof u === 'string' && u.startsWith('/')) ? (u + (u.includes('?') ? '&' : '?') + 'pin=' + encodeURIComponent(PIN)) : u, o);
+}
 
 let ws = null;
 let state = 'idle';

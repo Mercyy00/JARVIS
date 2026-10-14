@@ -1,150 +1,863 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rusty</title>
-  <link rel="stylesheet" href="style.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-</head>
-<body class="pip-mode state-idle">
-  <div class="aurora-bg" aria-hidden="true"></div>
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>JARVIS HUD</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap">
+<style>
+/* Layout: three-column command deck. Left = clock, vitals, status. Centre = voice-reactive core over the audio spectrum.
+   Right = radar over the activity log. Corner brackets, rulers and data labels sit on the viewport edge. */
+:root{
+  --bg:#02080d; --ink:#d7f5ff; --muted:#79aebf;
+  --a:79 216 255;      /* live accent, retinted per state by script */
+  --b:255 184 77;      /* secondary: amber for warnings and speech */
+  --line:rgb(var(--a) / .34);
+  --f-display:'Orbitron','Eurostile','Bank Gothic',sans-serif;
+  --f-body:'Rajdhani','Segoe UI Narrow','Arial Narrow',sans-serif;
+  --f-mono:'Share Tech Mono','SFMono-Regular',Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font:600 15px/1.35 var(--f-body);overflow:hidden;margin:0}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid rgb(var(--b));outline-offset:2px}
 
-  <div class="app">
-    <!-- Title / drag bar -->
-    <header class="bar" id="dragBar">
-      <div class="brand">
-        <span class="wordmark">RUSTY</span>
-        <span class="conn" id="connDot" title="Live link"></span>
+#bg{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
+.grid{position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(60% 55% at 50% 48%, rgb(var(--a) / .16), transparent 70%),
+    linear-gradient(rgb(var(--a) / .05) 1px, transparent 1px) 0 0/44px 44px,
+    linear-gradient(90deg, rgb(var(--a) / .05) 1px, transparent 1px) 0 0/44px 44px;
+  -webkit-mask:radial-gradient(90% 80% at 50% 50%, #000 40%, transparent 100%);mask:radial-gradient(90% 80% at 50% 50%, #000 40%, transparent 100%)}
+.scan{position:fixed;inset:0;z-index:40;pointer-events:none;
+  background:repeating-linear-gradient(0deg, rgb(0 0 0 / .16) 0 1px, transparent 1px 3px);animation:flick 5s steps(1) infinite}
+.beam{position:fixed;left:0;right:0;top:-160px;height:160px;z-index:39;pointer-events:none;
+  background:linear-gradient(180deg, transparent, rgb(var(--a) / .07), transparent);animation:beam 7.5s linear infinite}
+.flash{position:fixed;inset:0;z-index:38;pointer-events:none;opacity:0;background:radial-gradient(circle at 50% 48%, rgb(var(--a) / .5), transparent 60%)}
+.flash.go{animation:flash .9s ease-out}
+.alertglow{position:fixed;inset:0;z-index:37;pointer-events:none;opacity:0;transition:opacity .4s;box-shadow:inset 0 0 140px rgb(var(--a) / .55)}
+#hud[data-state="alert"] ~ .alertglow{opacity:1;animation:alertpulse .9s ease-in-out infinite}
+
+#hud{position:relative;z-index:2;height:100%;display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:12px;padding:10px clamp(16px,2.4vw,40px) 12px}
+
+/* header */
+.top{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:20px;padding-inline:10px;height:34px;animation:fade .8s .1s both}
+.brand{font:700 15px var(--f-display);letter-spacing:.3em;text-shadow:0 0 14px rgb(var(--a) / .8);white-space:nowrap}
+.brand small{font:500 10px var(--f-mono);letter-spacing:.12em;color:var(--muted);margin-left:12px}
+.ticker{overflow:hidden;white-space:nowrap;font:11px var(--f-mono);color:var(--muted);letter-spacing:.1em;-webkit-mask:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);mask:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}
+.ticker span{display:inline-block;animation:marquee 46s linear infinite}
+.ver{font:11px var(--f-mono);letter-spacing:.1em;color:var(--muted);white-space:nowrap;display:flex;align-items:center;gap:8px}
+.ver b{width:7px;height:7px;border-radius:50%;background:rgb(var(--a));box-shadow:0 0 8px rgb(var(--a));animation:blink 1.4s steps(2) infinite}
+
+/* stage */
+.stage{display:grid;grid-template-columns:minmax(250px,1fr) minmax(0,1.55fr) minmax(250px,1fr);gap:14px;min-height:0}
+.col,.mid{display:flex;flex-direction:column;gap:12px;min-height:0;min-width:0}
+
+.panel{position:relative;min-width:0;min-height:0;padding:10px 13px 12px;
+  background:linear-gradient(180deg, rgb(var(--a) / .1), rgb(var(--a) / .025));
+  border:1px solid var(--line);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
+  opacity:0;animation:panelIn .95s cubic-bezier(.2,.8,.2,1) both;animation-delay:var(--d,0s);transition:border-color .25s, box-shadow .25s}
+.panel::before,.panel::after{content:"";position:absolute;width:14px;height:14px;border:2px solid rgb(var(--a));pointer-events:none}
+.panel::before{top:-2px;left:-2px;border-right:0;border-bottom:0}
+.panel::after{bottom:-2px;right:-2px;border-left:0;border-top:0}
+.panel.locked{border-color:rgb(var(--a) / .8);box-shadow:0 0 22px rgb(var(--a) / .22), inset 0 0 26px rgb(var(--a) / .08)}
+#hud[data-state="wake"] .panel{animation:panelIn 0s both, wakepulse .9s ease-out}
+.hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:8px}
+.ttl{font:700 10.5px var(--f-display);letter-spacing:.24em;text-transform:uppercase;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.ttl::before{content:"";width:6px;height:6px;background:rgb(var(--a));box-shadow:0 0 8px rgb(var(--a))}
+.tag{font:10px var(--f-mono);letter-spacing:.1em;color:var(--muted);white-space:nowrap}
+
+/* clock */
+.clk{font:700 clamp(30px,3.6vw,50px)/1 var(--f-display);letter-spacing:.06em;text-shadow:0 0 18px rgb(var(--a) / .7);font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:2px}
+.clk .colon{animation:blink 1s steps(2) infinite;opacity:.9}
+.clk small{font-size:.42em;color:rgb(var(--b));text-shadow:0 0 10px rgb(var(--b) / .6);margin-left:8px}
+.date{margin-top:6px;font:700 13px var(--f-body);letter-spacing:.2em}
+.minline{height:3px;margin-top:9px;background:rgb(var(--a) / .15)}
+.minline i{display:block;height:100%;background:rgb(var(--a));box-shadow:0 0 8px rgb(var(--a));width:0}
+.sub{display:flex;justify-content:space-between;gap:10px;margin-top:7px;font:10.5px var(--f-mono);color:var(--muted);letter-spacing:.08em}
+
+/* vitals */
+.meters{display:flex;flex-direction:column;gap:9px}
+.meter{display:grid;grid-template-columns:34px minmax(0,1fr) 46px;align-items:center;gap:9px;font:12px var(--f-mono)}
+.meter .lab{letter-spacing:.12em;color:var(--muted)}
+.meter .val{text-align:right;font-variant-numeric:tabular-nums}
+.bar{position:relative;height:11px;background:rgb(var(--a) / .12);
+  -webkit-mask:repeating-linear-gradient(90deg,#000 0 6px,transparent 6px 8px);mask:repeating-linear-gradient(90deg,#000 0 6px,transparent 6px 8px)}
+.bar i{position:absolute;inset:0;transform-origin:left;transform:scaleX(var(--v,0));background:rgb(var(--a));box-shadow:0 0 10px rgb(var(--a))}
+.meter.hot .bar i{background:rgb(var(--b))}
+.meter.hot .val{color:rgb(var(--b))}
+.spark{display:block;width:100%;height:16px}
+
+/* status */
+.status{flex:1}
+.mode{font:900 clamp(22px,2.4vw,32px)/1 var(--f-display);letter-spacing:.14em;text-shadow:0 0 18px rgb(var(--a));margin:2px 0 12px;position:relative}
+.mode.glitch{animation:glitch .45s steps(2)}
+.pips{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin-bottom:12px}
+.pips span{font:9.5px var(--f-mono);letter-spacing:.08em;text-align:center;padding:4px 0;border:1px solid rgb(var(--a) / .28);color:var(--muted);transition:all .25s}
+.pips span.on{color:#021016;background:rgb(var(--a));border-color:rgb(var(--a));box-shadow:0 0 14px rgb(var(--a) / .8)}
+.rows{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font:11.5px var(--f-mono);letter-spacing:.06em}
+.rows dt{color:var(--muted)}
+.rows dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+
+/* core */
+.core{position:relative;flex:1;min-height:0;min-width:0;touch-action:none;user-select:none;-webkit-user-select:none;animation:fade 1.2s .2s both}
+.core canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.caption{position:absolute;left:50%;bottom:2%;transform:translateX(-50%);width:min(88%,560px);text-align:center;pointer-events:none}
+.cap-state{display:block;font:700 11px var(--f-display);letter-spacing:.34em;color:rgb(var(--a));text-shadow:0 0 12px rgb(var(--a))}
+.cap-text{display:block;min-height:2.7em;margin-top:4px;font:600 16px/1.35 var(--f-body);letter-spacing:.05em;text-wrap:balance}
+.boot{position:absolute;left:50%;top:3%;transform:translateX(-50%);width:min(70%,300px);text-align:center;font:11px var(--f-mono);letter-spacing:.2em;transition:opacity .8s;pointer-events:none}
+.boot i{display:block;height:2px;margin-top:6px;background:rgb(var(--a));box-shadow:0 0 8px rgb(var(--a));width:0}
+.boot.done{opacity:0}
+.banner{position:absolute;left:50%;top:2%;transform:translateX(-50%) scaleY(0);transform-origin:top;padding:6px 18px;font:900 12px var(--f-display);letter-spacing:.3em;color:#1a0400;background:rgb(var(--a));box-shadow:0 0 24px rgb(var(--a));transition:transform .25s;pointer-events:none;white-space:nowrap}
+#hud[data-state="alert"] .banner{transform:translateX(-50%) scaleY(1);animation:blink .7s steps(2) infinite}
+.hint{position:absolute;left:0;right:0;top:50%;margin-top:calc(min(34vh,26vw) + 12px);text-align:center;font:10px var(--f-mono);letter-spacing:.2em;color:var(--muted);pointer-events:none;opacity:0;transition:opacity .6s}
+#hud[data-state="idle"] .hint{opacity:.8}
+
+/* voice */
+.voice{height:clamp(112px,17vh,176px);display:flex;flex-direction:column}
+.voice canvas{display:block;flex:1;height:0;width:100%}
+
+/* radar and log */
+.radar canvas{display:block;margin:0 auto;width:min(100%,34vh);aspect-ratio:1/1}
+.logp{flex:1;display:flex;flex-direction:column}
+.log{list-style:none;margin:0;padding:0;flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;gap:4px;font:11.5px/1.4 var(--f-mono);
+  -webkit-mask:linear-gradient(180deg,transparent,#000 22%);mask:linear-gradient(180deg,transparent,#000 22%)}
+.log li{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:8px;letter-spacing:.03em}
+.log time{color:var(--muted)}
+.log b{font-weight:400;color:rgb(var(--a));min-width:2.4em}
+.log .k-jrv b,.log .k-jrv span{color:rgb(var(--b))}
+.log .k-usr span{color:#fff}
+.log .k-alt b,.log .k-alt span{color:rgb(255 96 72)}
+.log span{overflow-wrap:anywhere}
+
+/* command bar */
+.cmd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-inline:10px;animation:fade 1s 1.2s both}
+.cmd label{font:700 10.5px var(--f-display);letter-spacing:.24em;color:rgb(var(--a))}
+.cmd input{flex:1 1 260px;min-width:0;background:rgb(var(--a) / .06);border:1px solid var(--line);padding:7px 11px;font:13px var(--f-mono);letter-spacing:.05em}
+.cmd input::placeholder{color:var(--muted)}
+.cmd button{background:transparent;border:1px solid var(--line);padding:6px 11px;font:700 11px var(--f-body);letter-spacing:.16em;text-transform:uppercase;cursor:pointer;transition:all .2s}
+.cmd button:hover{background:rgb(var(--a) / .18);border-color:rgb(var(--a));box-shadow:0 0 14px rgb(var(--a) / .4)}
+.cmd .warn{border-color:rgb(var(--b) / .6);color:rgb(var(--b))}
+.chips{display:flex;gap:7px;flex-wrap:wrap}
+
+/* frame */
+.frame{position:fixed;inset:0;z-index:30;pointer-events:none}
+.corner{position:absolute;width:46px;height:46px;border:2px solid rgb(var(--a));filter:drop-shadow(0 0 6px rgb(var(--a)));animation:corner 1.1s cubic-bezier(.2,.8,.2,1) both}
+.corner.tl{top:6px;left:6px;border-right:0;border-bottom:0;transform-origin:top left}
+.corner.tr{top:6px;right:6px;border-left:0;border-bottom:0;transform-origin:top right}
+.corner.bl{bottom:6px;left:6px;border-right:0;border-top:0;transform-origin:bottom left}
+.corner.br{bottom:6px;right:6px;border-left:0;border-top:0;transform-origin:bottom right}
+.ruler{position:absolute;top:22%;height:56%;width:8px;opacity:.55;
+  background:repeating-linear-gradient(180deg, rgb(var(--a)) 0 1px, transparent 1px 9px);animation:ruler 2.4s linear infinite, fade 1s 1s both}
+.ruler.l{left:3px}.ruler.r{right:3px}
+.lbl{position:absolute;font:10px/1.5 var(--f-mono);letter-spacing:.1em;color:var(--muted);white-space:pre;animation:fade 1s 1.4s both}
+.lbl.tl{top:52px;left:16px}.lbl.tr{top:52px;right:16px;text-align:right}
+.lbl.bl{bottom:50px;left:16px}.lbl.br{bottom:50px;right:16px;text-align:right}
+
+/* reticle */
+.reticle{position:fixed;left:0;top:0;width:44px;height:44px;pointer-events:none;z-index:50;display:none;will-change:transform}
+@media (pointer:fine){.reticle{display:block}#hud{cursor:crosshair}}
+.reticle i{position:absolute;width:11px;height:11px;border:2px solid rgb(var(--a));filter:drop-shadow(0 0 4px rgb(var(--a)))}
+.reticle .t1{left:0;top:0;border-right:0;border-bottom:0}.reticle .t2{right:0;top:0;border-left:0;border-bottom:0}
+.reticle .t3{left:0;bottom:0;border-right:0;border-top:0}.reticle .t4{right:0;bottom:0;border-left:0;border-top:0}
+.reticle .ring{position:absolute;inset:9px;border:1px dashed rgb(var(--a) / .8);border-radius:50%;animation:spin 5s linear infinite;transition:opacity .2s}
+.reticle .dot{position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px;background:rgb(var(--a));box-shadow:0 0 8px rgb(var(--a));transition:opacity .2s}
+.reticle.lock .ring,.reticle.lock .dot{opacity:0}
+.reticle .rl{position:absolute;left:100%;top:100%;margin:5px 0 0 7px;font:10px var(--f-mono);letter-spacing:.1em;white-space:nowrap;color:rgb(var(--a));text-shadow:0 0 6px rgb(0 0 0)}
+
+@keyframes panelIn{from{opacity:0;clip-path:inset(-14px -14px 100% -14px)}60%{opacity:1}to{opacity:1;clip-path:inset(-14px -14px -14px -14px)}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes corner{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes flick{0%,100%{opacity:1}46%{opacity:.82}47%{opacity:1}91%{opacity:.9}92%{opacity:1}}
+@keyframes beam{to{transform:translateY(calc(100vh + 320px))}}
+@keyframes marquee{to{transform:translateX(-50%)}}
+@keyframes blink{50%{opacity:.25}}
+@keyframes ruler{to{background-position:0 9px}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes flash{from{opacity:1}to{opacity:0}}
+@keyframes alertpulse{50%{opacity:.35}}
+@keyframes wakepulse{0%{box-shadow:0 0 0 rgb(var(--a) / 0)}30%{box-shadow:0 0 30px rgb(var(--a) / .7), inset 0 0 30px rgb(var(--a) / .3)}100%{box-shadow:0 0 0 rgb(var(--a) / 0)}}
+@keyframes glitch{0%{transform:translate(0)}20%{transform:translate(-3px,1px);clip-path:inset(10% 0 55% 0)}40%{transform:translate(4px,-1px);clip-path:inset(55% 0 10% 0)}60%{transform:translate(-2px,0);clip-path:inset(0)}100%{transform:translate(0)}}
+
+/* below desktop: single scrolling column, core first */
+@media (max-width:900px){
+  html,body{height:auto;overflow-y:auto;overflow-x:hidden}
+  #hud{height:auto;min-height:100vh;display:flex;flex-direction:column}
+  .top{grid-template-columns:minmax(0,1fr);height:auto;padding-top:12px}
+  .ticker,.ver,.brand small{display:none}
+  .stage{display:flex;flex-direction:column}
+  .col,.mid{display:contents}
+  .core{order:1;flex:none;height:min(94vw,520px)}
+  .status{order:2;flex:none}
+  .voice{order:3}
+  .clock{order:4}.vitals{order:5}.radar{order:6}.logp{order:7;flex:none;min-height:240px}
+  .hint{margin-top:calc(47vw + 8px)}
+  .lbl{display:none}
+  .cmd{padding-inline:0}
+}
+@media (min-width:901px) and (max-height:780px){.rows{display:none}.pips{margin-bottom:0}.status .mode{margin-bottom:8px}}
+@media (prefers-reduced-motion:reduce){
+  .panel{opacity:1;animation:none}.beam,.ticker span,.ruler,.scan{animation:none}.corner{animation:none}
+}
+</style>
+
+<canvas id="bg" aria-hidden="true"></canvas>
+<div class="grid" aria-hidden="true"></div>
+<div class="beam" aria-hidden="true"></div>
+<div class="scan" aria-hidden="true"></div>
+<div class="flash" id="flash" aria-hidden="true"></div>
+<div class="frame" aria-hidden="true">
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <div class="ruler l"></div><div class="ruler r"></div>
+  <div class="lbl tl" id="lbl-tl"></div><div class="lbl tr" id="lbl-tr"></div>
+  <div class="lbl bl" id="lbl-bl"></div><div class="lbl br" id="lbl-br"></div>
+</div>
+
+<div id="hud" data-state="boot">
+  <header class="top">
+    <div class="brand">J.A.R.V.I.S.<small>TACTICAL INTERFACE</small></div>
+    <div class="ticker" aria-hidden="true"><span id="ticker"></span></div>
+    <div class="ver"><b></b>MK VII &middot; HUD v7.3.1 &middot; BUILD 20261011</div>
+  </header>
+
+  <main class="stage">
+    <section class="col">
+      <div class="panel clock" data-lock="CHRONO" style="--d:.45s">
+        <div class="hd"><span class="ttl">Chrono</span><span class="tag" id="tz">LOCAL</span></div>
+        <div class="clk"><span id="hh">00</span><span class="colon">:</span><span id="mm">00</span><small id="ss">00</small></div>
+        <div class="date" id="date">--</div>
+        <div class="minline"><i id="secbar"></i></div>
+        <div class="sub"><span>SESSION</span><span id="up">T+00:00:00</span></div>
       </div>
-      <div class="win-ctrls">
-        <button id="muteBtn" class="icon" title="Mute her voice" aria-label="Mute voice"></button>
-        <button id="pinBtn" class="icon on" title="Keep on top" aria-label="Keep on top"></button>
-        <button id="expandBtn" class="icon" title="Expand" aria-label="Expand"></button>
-        <button id="settingsBtn" class="icon" title="Settings" aria-label="Settings"></button>
-        <button id="minBtn" class="icon" title="Minimize" aria-label="Minimize"></button>
-        <button id="closeBtn" class="icon danger" title="Close" aria-label="Close"></button>
+
+      <div class="panel vitals" data-lock="VITALS" style="--d:.7s">
+        <div class="hd"><span class="ttl">System vitals</span><span class="tag" id="vtag">SIM</span></div>
+        <div class="meters">
+          <div class="meter" data-k="cpu"><span class="lab">CPU</span><div class="bar"><i></i></div><span class="val">0%</span></div>
+          <div class="meter" data-k="gpu"><span class="lab">GPU</span><div class="bar"><i></i></div><span class="val">0%</span></div>
+          <div class="meter" data-k="ram"><span class="lab">RAM</span><div class="bar"><i></i></div><span class="val">0%</span></div>
+          <div class="meter" data-k="battery"><span class="lab">PWR</span><div class="bar"><i></i></div><span class="val">0%</span></div>
+          <div class="meter" data-k="network"><span class="lab">NET</span><canvas class="spark" id="spark"></canvas><span class="val">0M</span></div>
+        </div>
       </div>
-    </header>
 
-    <main class="stage">
-      <!-- Left: vitals (expanded mode) -->
-      <aside class="side vitals deck-only">
-        <h2 class="side-title">Vitals</h2>
-        <div class="meter">
-          <div class="meter-top"><span>Processor</span><span id="cpu" class="num">0%</span></div>
-          <div class="track"><i id="cpuBar"></i></div>
-        </div>
-        <div class="meter">
-          <div class="meter-top"><span>Memory</span><span id="ram" class="num">0%</span></div>
-          <div class="track"><i id="ramBar"></i></div>
-          <span class="meter-sub" id="ramSub">0 / 0 GB</span>
-        </div>
-        <div class="meter">
-          <div class="meter-top"><span>Battery</span><span id="battery" class="num">—</span></div>
-          <div class="track"><i id="batteryBar"></i></div>
-          <span class="meter-sub" id="batterySub">AC power</span>
-        </div>
-        <div class="kv"><span>Graphics</span><span id="gpu" class="num">—</span></div>
-        <div class="kv"><span>Mind</span><span id="model" class="num">—</span></div>
-
-        <div class="chips">
-          <button class="chip" data-cmd="open brave browser">Brave</button>
-          <button class="chip" data-cmd="open youtube">YouTube</button>
-          <button class="chip" data-cmd="list running applications">Running apps</button>
-          <button class="chip" data-cmd="open downloads folder">Downloads</button>
-          <button class="chip" data-cmd="turn volume up">Volume up</button>
-          <button class="chip" data-cmd="play or pause music">Play / pause</button>
-        </div>
-      </aside>
-
-      <!-- Center: the orb -->
-      <section class="core">
-        <div class="orb-wrap">
-          <span class="ring" id="orbRing"></span>
-          <div class="orb" id="orb">
-            <span class="blob b1"></span>
-            <span class="blob b2"></span>
-            <span class="blob b3"></span>
-            <span class="shimmer"></span>
-            <span class="cap"></span>
-          </div>
-        </div>
-
-        <p class="state-line" id="stateLine">Standing by.</p>
-
-        <button id="wakeBtn" class="pill on" title="Toggle listening for your voice">
-          <span class="pill-dot"></span><span id="wakeText">Listening for “Rusty”</span>
-        </button>
-
-        <div class="transcript" id="transcript"></div>
-
-        <div class="chips core-chips">
-          <button class="chip" data-cmd="open Raaga app and play songs">Play music</button>
-          <button class="chip" data-cmd="what is currently open on my screen?">What's on screen</button>
-          <button class="chip" data-cmd="check battery status">Battery</button>
-          <button class="chip" data-cmd="keep the browser window and Antigravity window and close all the other windows which are currently running">Tidy desktop</button>
-        </div>
-      </section>
-
-      <!-- Right: activity + memory (expanded mode) -->
-      <aside class="side info deck-only">
-        <div class="tabs">
-          <button class="tab on" data-tab="activity">Activity</button>
-          <button class="tab" data-tab="memory">Memory</button>
-        </div>
-        <div class="tab-body" id="tabActivity">
-          <div class="log" id="logFeed"></div>
-        </div>
-        <div class="tab-body hidden" id="tabMemory">
-          <div class="mem">
-            <h3>About you</h3>
-            <div id="memProfile" class="mem-list"></div>
-          </div>
-          <div class="mem">
-            <h3>Saved links</h3>
-            <div id="memLinks" class="mem-list"></div>
-          </div>
-          <div class="mem">
-            <h3>Lately</h3>
-            <p id="memJournal" class="mem-note">Nothing noted yet.</p>
-          </div>
-        </div>
-      </aside>
-    </main>
-
-    <footer class="composer">
-      <div class="field">
-        <input id="input" type="text" autocomplete="off" placeholder="Talk to Rusty — or hold space to speak">
+      <div class="panel status" data-lock="STATUS" style="--d:.95s">
+        <div class="hd"><span class="ttl">Core status</span><span class="tag">MODE</span></div>
+        <div class="mode" id="mode">BOOTING</div>
+        <div class="pips" id="pips"><span data-s="idle">IDLE</span><span data-s="listening">LISTEN</span><span data-s="thinking">THINK</span><span data-s="speaking">SPEAK</span><span data-s="alert">ALERT</span></div>
+        <dl class="rows">
+          <dt>ARC OUTPUT</dt><dd id="r-arc">--</dd>
+          <dt>LATENCY</dt><dd id="r-lat">--</dd>
+          <dt>THREAT</dt><dd id="r-thr">NONE</dd>
+          <dt>LINK</dt><dd id="r-link">SECURE</dd>
+        </dl>
       </div>
-      <button id="micBtn" class="icon mic" title="Hold space or click to speak" aria-label="Speak"></button>
-      <button id="sendBtn" class="icon send" title="Send" aria-label="Send"></button>
-    </footer>
-  </div>
+    </section>
 
-  <div class="sheet-backdrop" id="sheetBackdrop"></div>
-  <aside class="sheet" id="settingsSheet" aria-hidden="true">
-    <div class="sheet-head">
-      <h2>Settings</h2>
-      <button id="sheetClose" class="icon" title="Close" aria-label="Close settings"></button>
+    <section class="mid">
+      <div class="core" id="core" data-lock="CORE">
+        <canvas id="coreCv"></canvas>
+        <div class="boot" id="boot">SYSTEM INIT <span id="bootpct">000</span>%<i id="bootbar"></i></div>
+        <div class="banner" id="banner">ALERT &middot; PERIMETER</div>
+        <div class="hint">HOLD SPACE OR PRESS AND HOLD THE CORE TO SPEAK</div>
+        <div class="caption"><span class="cap-state" id="capState">INITIALISING</span><span class="cap-text" id="capText"></span></div>
+      </div>
+      <div class="panel voice" data-lock="AUDIO" style="--d:1.15s">
+        <div class="hd"><span class="ttl">Voice</span><span class="tag" id="vtagv">STANDBY &middot; -60 dB</span></div>
+        <canvas id="specCv"></canvas>
+      </div>
+    </section>
+
+    <section class="col">
+      <div class="panel radar" data-lock="RADAR" style="--d:.6s">
+        <div class="hd"><span class="ttl">Radar</span><span class="tag" id="rtag">RANGE 5 KM</span></div>
+        <canvas id="radarCv"></canvas>
+      </div>
+      <div class="panel logp" data-lock="ACTIVITY LOG" style="--d:.85s">
+        <div class="hd"><span class="ttl">Activity log</span><span class="tag" id="ltag">0 EVENTS</span></div>
+        <ul class="log" id="log" aria-live="polite"></ul>
+      </div>
+    </section>
+  </main>
+
+  <form class="cmd" id="cmd" autocomplete="off">
+    <label for="q">QUERY &gt;</label>
+    <input id="q" type="text" placeholder="Ask J.A.R.V.I.S. anything, for example: status report">
+    <button type="submit">Send</button>
+    <div class="chips">
+      <button type="button" data-q="Status report">Status</button>
+      <button type="button" data-q="Scan the perimeter">Scan</button>
+      <button type="button" data-q="What time is it">Time</button>
+      <button type="button" data-act="wake">Wake</button>
+      <button type="button" class="warn" data-act="alert">Alert</button>
+      <button type="button" data-act="standby">Standby</button>
     </div>
-    <label class="toggle-row">
-      <span class="toggle-copy">
-        <strong>Start with Windows</strong>
-        <em>Opens Rusty in the corner when you log in</em>
-      </span>
-      <span class="switch"><input type="checkbox" id="autostart"><i></i></span>
-    </label>
-    <div class="sheet-info">
-      <div class="kv"><span>Mind</span><span id="sheetModel" class="num">—</span></div>
-      <div class="kv"><span>Provider</span><span id="sheetProvider" class="num">—</span></div>
-      <div class="kv"><span>Latency</span><span id="ping" class="num">—</span></div>
-      <div class="kv"><span>Clock</span><span id="clock" class="num">—</span></div>
-    </div>
-  </aside>
+  </form>
+</div>
+<div class="alertglow" aria-hidden="true"></div>
 
-  <script src="app.js"></script>
-</body>
-</html>
+<div class="reticle" id="reticle" aria-hidden="true"><i class="t1"></i><i class="t2"></i><i class="t3"></i><i class="t4"></i><div class="ring"></div><div class="dot"></div><div class="rl" id="rl"></div></div>
+
+<script>
+/* ===================== J.A.R.V.I.S. HUD public interface =====================
+   JARVIS.setStatus('idle'|'wake'|'listening'|'thinking'|'speaking'|'alert')
+   JARVIS.setVoice(level)            0..1 mic or speech level. Simulation resumes 1.2 s after the last call.
+   JARVIS.setSpectrum(bins)          optional array of 0..1 values, e.g. from an AnalyserNode
+   JARVIS.setGauges({cpu,gpu,ram,battery,network})   cpu/gpu/ram/battery 0..100, network in Mbps (0..300).
+                                     Pass null for a key to hand it back to the simulation.
+   JARVIS.log(text, kind)            kind: 'sys' | 'usr' | 'jrv' | 'alt'
+   JARVIS.say(text, {duration, after})  speaking state, log line and caption
+   JARVIS.wake()  JARVIS.alert(msg)  JARVIS.standby()
+   JARVIS.onCommand = (text) => {}   runs when the viewer submits a query; answer with JARVIS.say()
+   JARVIS.demo(false)                stops simulated chatter and idle log lines
+   ============================================================================ */
+(() => {
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const sm = t => t * t * (3 - 2 * t);
+const TAU = Math.PI * 2;
+const fr = x => x - Math.floor(x);
+const nz = x => fr(Math.sin(x * 127.1) * 43758.5453);
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const root = document.documentElement;
+const hud = $('#hud');
+
+const STATES = {
+  boot:{rgb:[79,216,255],energy:.5},
+  idle:{rgb:[79,200,255],energy:.55},
+  wake:{rgb:[190,245,255],energy:1.5},
+  listening:{rgb:[64,228,255],energy:1},
+  thinking:{rgb:[120,160,255],energy:.9},
+  speaking:{rgb:[96,236,226],energy:1.15},
+  alert:{rgb:[255,92,66],energy:1.1}
+};
+const SPIN = {boot:1.6,idle:.35,wake:2.4,listening:.8,thinking:2.8,speaking:1,alert:1.7};
+const SWEEP = {boot:1.5,idle:.9,wake:3,listening:1.5,thinking:3.2,speaking:1.4,alert:2.6};
+const LOAD = {boot:.35,idle:0,wake:.2,listening:.1,thinking:.38,speaking:.16,alert:.26};
+const TAGS = {sys:'SYS',usr:'USR',jrv:'JRV',alt:'ALT'};
+
+let state = 'boot', userTalking = false, demoOn = true, T = 0, bootP = 0, env = 0;
+const ext = {voice:0, voiceUntil:0, spec:null, specUntil:0, g:{cpu:null,gpu:null,ram:null,battery:null,network:null}};
+const real = {battery:null, charging:false};
+const theme = {rgb:[79,216,255], energy:.5};
+const rgba = (a, c = theme.rgb) => `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${clamp(a)})`;
+
+/* ---------- canvases ---------- */
+function setup(id){
+  const c = document.getElementById(id), o = {c, x:c.getContext('2d'), w:1, h:1, dpr:1};
+  new ResizeObserver(() => {
+    const r = c.getBoundingClientRect(); o.dpr = Math.min(2, devicePixelRatio || 1);
+    o.w = r.width; o.h = r.height;
+    c.width = Math.max(1, Math.round(r.width * o.dpr)); c.height = Math.max(1, Math.round(r.height * o.dpr));
+  }).observe(c);
+  return o;
+}
+const cv = {bg:setup('bg'), core:setup('coreCv'), spec:setup('specCv'), radar:setup('radarCv'), spark:setup('spark')};
+
+/* ---------- log, caption, ui ---------- */
+const logEl = $('#log'); let logCount = 0;
+function log(text, kind = 'sys', type = true){
+  kind = TAGS[kind] ? kind : 'sys';
+  const li = document.createElement('li'); li.className = 'k-' + kind;
+  const t = document.createElement('time'); t.textContent = new Date().toLocaleTimeString([], {hour12:false});
+  const b = document.createElement('b'); b.textContent = TAGS[kind];
+  const sp = document.createElement('span');
+  li.append(t, b, sp); logEl.appendChild(li);
+  while (logEl.children.length > 60) logEl.removeChild(logEl.firstChild);
+  $('#ltag').textContent = (++logCount) + ' EVENTS';
+  text = String(text);
+  if (!type || reduce){ sp.textContent = text; return; }
+  let i = 0; const step = () => { i = Math.min(text.length, i + 2); sp.textContent = text.slice(0, i); if (i < text.length) setTimeout(step, 16); };
+  step();
+}
+const capState = $('#capState'), capText = $('#capText'); let capTimer = 0;
+function setCaption(text, perChar = 0){
+  clearInterval(capTimer);
+  if (!perChar){ capText.textContent = text; return; }
+  let i = 0; capText.textContent = '';
+  capTimer = setInterval(() => { i++; capText.textContent = text.slice(0, i); if (i >= text.length) clearInterval(capTimer); }, perChar);
+}
+const IDLE_HINT = 'Say "Jarvis", or hold the core to talk.';
+const CAP_WORD = {boot:'INITIALISING',idle:'STANDBY',wake:'WAKE WORD DETECTED',listening:'LISTENING',thinking:'PROCESSING',speaking:'J.A.R.V.I.S.',alert:'ALERT'};
+const VOICE_TAG = {boot:'CALIBRATING',idle:'STANDBY',wake:'WAKE',listening:'INPUT',thinking:'ANALYSIS',speaking:'OUTPUT',alert:'KLAXON'};
+
+function uiState(){
+  const m = $('#mode'); m.textContent = state === 'wake' ? 'WAKE' : state.toUpperCase();
+  m.classList.remove('glitch'); void m.offsetWidth; m.classList.add('glitch');
+  capState.textContent = CAP_WORD[state];
+  const key = state === 'wake' ? 'listening' : state;
+  document.querySelectorAll('#pips span').forEach(p => p.classList.toggle('on', p.dataset.s === key));
+  $('#r-thr').textContent = state === 'alert' ? 'ELEVATED' : 'NONE';
+  $('#r-link').textContent = state === 'boot' ? 'SYNC' : 'SECURE';
+  $('#rtag').textContent = state === 'alert' ? 'TRACKING' : 'RANGE 5 KM';
+  if (state === 'idle') setCaption(IDLE_HINT);
+  if (state === 'listening') setCaption(userTalking ? '' : 'Go ahead, sir.');
+  if (state === 'wake') setCaption('');
+  if (state === 'thinking') setCaption('');
+}
+function setState(s){
+  if (!STATES[s] || s === state) return;
+  state = s; hud.dataset.state = s; uiState();
+  if (s === 'wake'){ shocks.push({r:0}); if (!reduce){ const f = $('#flash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go'); } }
+}
+
+/* ---------- conversation flow ---------- */
+let idleT = 0, alertT = 0, sayT = 0, talkStart = 0; const timers = [];
+const armIdle = (ms = 8000) => { clearTimeout(idleT); idleT = setTimeout(() => { if (state === 'listening' && !userTalking){ setState('idle'); log('Returning to standby.', 'sys'); } }, ms); };
+function cancelSpeech(){ timers.splice(0).forEach(clearTimeout); clearTimeout(sayT); clearInterval(capTimer); }
+
+function wake(){
+  if (state === 'wake') return;
+  cancelSpeech(); clearTimeout(alertT);
+  log('Wake word detected.', 'sys'); setState('wake');
+  timers.push(setTimeout(() => { if (state === 'wake'){ setState('listening'); } }, 900));
+  armIdle(10000);
+}
+function say(text, o = {}){
+  clearTimeout(sayT); clearTimeout(idleT);
+  setState('speaking'); text = String(text); log(text, 'jrv');
+  const dur = o.duration ?? 700 + text.length * 56;
+  setCaption(text, clamp(dur / Math.max(1, text.length) * .85, 18, 70));
+  sayT = setTimeout(() => {
+    if (state !== 'speaking') return;
+    const next = o.after || 'listening'; setState(next);
+    if (next === 'listening'){ armIdle(7000); setCaption(''); }
+  }, dur);
+}
+function raiseAlert(msg = 'Proximity alert. Unidentified contacts on the perimeter.'){
+  cancelSpeech(); clearTimeout(idleT); clearTimeout(alertT);
+  setState('alert'); log(msg, 'alt'); log('Switching to threat tracking.', 'sys'); setCaption(msg, 28);
+  blips.forEach((b, i) => { if (i % 2 === 0){ b.hot = true; } });
+  alertT = setTimeout(() => { if (state === 'alert'){ log('Threat cleared. Resuming normal operations.', 'sys'); setState('listening'); armIdle(5000); } }, 7000);
+}
+function standby(){ cancelSpeech(); clearTimeout(alertT); userTalking = false; setState('idle'); log('Standby engaged.', 'sys'); }
+
+function answer(q){
+  const s = q.toLowerCase(), d = new Date();
+  if (/\b(alert|danger|breach|intruder)\b/.test(s)) return {alert:true};
+  if (/\b(time|date|today)\b/.test(s)) return {text:`It is ${d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} on ${d.toLocaleDateString([], {weekday:'long', day:'numeric', month:'long'})}, sir.`};
+  if (/\b(scan|radar|perimeter|contacts)\b/.test(s)){ const hot = blips.filter(b => b.hot).length; return {text:`Scan complete. ${blips.length} contacts in range, ${hot ? hot + ' flagged hostile' : 'none hostile'}.`}; }
+  if (/\b(status|report|systems?|diagnostics?)\b/.test(s)) return {text:`All systems nominal, sir. Processor load ${Math.round(gv.cpu)} percent, memory ${Math.round(gv.ram)} percent.`};
+  if (/\b(standby|sleep|shut ?down)\b/.test(s)) return {text:'Going to standby, sir.', after:'idle'};
+  if (/\b(hello|hi|jarvis|good (morning|afternoon|evening))\b/.test(s)) return {text:'At your service, sir.'};
+  if (!q) return {text:'I am here, sir. What do you need?'};
+  return {text:'Understood, sir. I have logged the request.'};
+}
+function respond(q){
+  cancelSpeech(); clearTimeout(idleT); clearTimeout(alertT);
+  log(q || 'Voice input received.', 'usr'); setState('thinking');
+  timers.push(setTimeout(() => {
+    if (typeof api.onCommand === 'function'){
+      try { api.onCommand(q || ''); } catch (e){ log('onCommand error: ' + e.message, 'alt'); setState('listening'); armIdle(); }
+      return;
+    }
+    const a = answer(q || '');
+    if (a.alert) raiseAlert(); else say(a.text, {after:a.after});
+  }, 800 + Math.random() * 800));
+}
+function startTalk(){
+  if (talkStart) return;
+  talkStart = performance.now(); userTalking = true; clearTimeout(idleT);
+  if (state !== 'listening' && state !== 'wake') wake();
+}
+function endTalk(){
+  if (!talkStart) return;
+  const d = performance.now() - talkStart; talkStart = 0; userTalking = false;
+  if (d < 260){ armIdle(10000); return; }
+  respond('');
+}
+
+/* ---------- input ---------- */
+const coreEl = $('#core');
+coreEl.addEventListener('pointerdown', e => { if (e.button === 0) startTalk(); });
+addEventListener('pointerup', () => endTalk());
+addEventListener('pointercancel', () => endTalk());
+addEventListener('keydown', e => {
+  if (e.code !== 'Space' || e.repeat) return;
+  const t = document.activeElement && document.activeElement.tagName;
+  if (t === 'INPUT' || t === 'BUTTON' || t === 'TEXTAREA') return;
+  e.preventDefault(); startTalk();
+});
+addEventListener('keyup', e => { if (e.code === 'Space') endTalk(); });
+$('#cmd').addEventListener('submit', e => {
+  e.preventDefault(); const q = $('#q'); const v = q.value.trim(); if (!v) return; q.value = ''; respond(v);
+});
+document.querySelectorAll('.chips button').forEach(b => b.addEventListener('click', () => {
+  if (b.dataset.q) respond(b.dataset.q);
+  else if (b.dataset.act === 'wake') wake();
+  else if (b.dataset.act === 'alert') raiseAlert();
+  else if (b.dataset.act === 'standby') standby();
+}));
+
+/* ---------- gauges ---------- */
+const gv = {cpu:12, gpu:9, ram:44, battery:87, network:80};
+const gTarget = {cpu:12, gpu:9, ram:44, battery:87, network:80};
+const netHist = new Array(60).fill(60);
+const meters = {}; document.querySelectorAll('.meter').forEach(m => { meters[m.dataset.k] = m; });
+try {
+  if (navigator.getBattery) navigator.getBattery().then(b => {
+    const u = () => { real.battery = b.level * 100; real.charging = b.charging; };
+    u(); b.addEventListener('levelchange', u); b.addEventListener('chargingchange', u);
+  }).catch(() => {});
+} catch (e) {}
+function stepGauges(){
+  const ld = LOAD[state], k = state === 'boot' ? clamp(bootP) : 1;
+  const sim = {
+    cpu:14 + ld * 62 + (nz(T * .35) - .5) * 14,
+    gpu:10 + ld * 70 + (nz(T * .3 + 9) - .5) * 12,
+    ram:44 + ld * 14 + Math.sin(T * .05) * 4 + (nz(T * .1 + 3) - .5) * 3,
+    battery:real.battery ?? 87 - Math.sin(T * .01) * .5,
+    network:(navigator.connection && navigator.connection.downlink) ? navigator.connection.downlink : 60 + ld * 90 + (nz(T * .4 + 5)) * 90
+  };
+  let ncount = 0;
+  for (const key of Object.keys(gv)){
+    const e = ext.g[key]; const live = e !== null || (key === 'battery' && real.battery !== null);
+    if (live) ncount++;
+    gTarget[key] = (e !== null ? e : sim[key]) * (key === 'battery' ? 1 : k);
+    gv[key] = lerp(gv[key], gTarget[key], .3);
+  }
+  $('#vtag').textContent = ncount === 5 ? 'LIVE' : ncount ? 'MIXED' : 'SIM';
+  for (const key of Object.keys(meters)){
+    const m = meters[key], v = gv[key];
+    if (key === 'network'){
+      m.querySelector('.val').textContent = Math.round(v) + 'M';
+    } else {
+      m.querySelector('.bar i').style.setProperty('--v', clamp(v / 100).toFixed(3));
+      m.querySelector('.val').textContent = Math.round(v) + (key === 'battery' && real.charging ? '+' : '%');
+      m.classList.toggle('hot', key === 'battery' ? v < 20 : v > 85);
+    }
+  }
+  netHist.push(gv.network); netHist.shift();
+  $('#r-arc').textContent = (97.4 + Math.sin(T * .7) * .6 + (state === 'alert' ? -4 : 0)).toFixed(1) + '%';
+  $('#r-lat').textContent = (6 + (state === 'thinking' ? 24 : 4) * nz(T * 3)).toFixed(0) + ' ms';
+}
+function drawSpark(){
+  const {x, w, h, dpr} = cv.spark; x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, w, h);
+  const max = Math.max(120, ...netHist);
+  x.beginPath();
+  netHist.forEach((v, i) => { const px = i / (netHist.length - 1) * w, py = h - 2 - clamp(v / max) * (h - 4); i ? x.lineTo(px, py) : x.moveTo(px, py); });
+  x.strokeStyle = rgba(.9); x.lineWidth = 1.4; x.stroke();
+  x.lineTo(w, h); x.lineTo(0, h); x.fillStyle = rgba(.14); x.fill();
+}
+
+/* ---------- clock ---------- */
+const t0 = Date.now();
+const MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'], DOW = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
+const p2 = n => String(n).padStart(2, '0');
+function tickClock(){
+  const d = new Date();
+  $('#hh').textContent = p2(d.getHours()); $('#mm').textContent = p2(d.getMinutes()); $('#ss').textContent = p2(d.getSeconds());
+  $('#date').textContent = `${DOW[d.getDay()]} · ${p2(d.getDate())} ${MON[d.getMonth()]} ${d.getFullYear()}`;
+  $('#secbar').style.width = ((d.getSeconds() + d.getMilliseconds() / 1000) / 60 * 100).toFixed(1) + '%';
+  const up = Math.floor((Date.now() - t0) / 1000);
+  $('#up').textContent = `T+${p2(Math.floor(up / 3600))}:${p2(Math.floor(up / 60) % 60)}:${p2(up % 60)}`;
+}
+(() => {
+  const off = -new Date().getTimezoneOffset(), s = off >= 0 ? '+' : '-', a = Math.abs(off);
+  $('#tz').textContent = `UTC${s}${p2(Math.floor(a / 60))}:${p2(a % 60)}`;
+})();
+
+/* ---------- voice and spectrum ---------- */
+const N = 64, spec = new Float32Array(N), tgt = new Float32Array(N), peak = new Float32Array(N);
+function speech(t, k){
+  const gate = sm(clamp((Math.sin(t * 1.35 + Math.sin(t * .4) * 2) + .75) / .5));
+  const syl = Math.abs(Math.sin(t * 7.1 + Math.sin(t * 2.3) * 1.8)), syl2 = .6 + .4 * Math.sin(t * 13.7);
+  return clamp((.12 + .7 * syl * syl2) * gate * k + .04);
+}
+function voiceTarget(){
+  const n = performance.now();
+  if (ext.voiceUntil > n) return ext.voice;
+  if (ext.specUntil > n && ext.spec){ let s = 0; for (let i = 0; i < ext.spec.length; i++) s += ext.spec[i]; return clamp(s / ext.spec.length * 1.8); }
+  switch (state){
+    case 'speaking': return speech(T, 1);
+    case 'listening': return userTalking ? speech(T * .87 + 10, 1.15) : .04 + .05 * nz(Math.floor(T * 6));
+    case 'wake': return .55;
+    case 'thinking': return .06 + .04 * Math.sin(T * 6);
+    case 'alert': return .14 + .12 * Math.max(0, Math.sin(T * 5));
+    case 'boot': return .05 * bootP;
+    default: return .018 + .016 * Math.sin(T * 1.3);
+  }
+}
+function stepVoice(dt){
+  const v = voiceTarget(); env += (v - env) * (v > env ? .35 : .09);
+  const n = performance.now();
+  for (let i = 0; i < N; i++){
+    if (ext.specUntil > n && ext.spec) tgt[i] = clamp(ext.spec[Math.floor(i / N * ext.spec.length)] || 0);
+    else {
+      const x = i / N, shape = Math.exp(-x * 2.2) * .9 + .18 * Math.pow(Math.sin(x * 9 + T * 3), 2);
+      tgt[i] = clamp(env * 1.3 * shape * (.55 + .45 * nz(i * 3.1 + Math.floor(T * 14) * 1.7)) + (state === 'idle' ? .02 * nz(i + T) : 0));
+    }
+    if (state === 'thinking'){ const pos = (T * 38) % N; tgt[i] = Math.max(tgt[i], .55 * Math.exp(-Math.pow(i - pos, 2) / 16)); }
+    spec[i] += (tgt[i] - spec[i]) * (tgt[i] > spec[i] ? .5 : .16);
+    peak[i] = Math.max(spec[i], peak[i] - dt * .5);
+  }
+  const db = env > .001 ? Math.max(-60, 20 * Math.log10(env)) : -60;
+  $('#vtagv').textContent = `${VOICE_TAG[state]} · ${db.toFixed(0)} dB`;
+}
+
+/* ---------- core ---------- */
+let rot = 0, spinV = .5; const shocks = [];
+function drawCore(dt){
+  const {x, w, h, dpr} = cv.core; x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h * .47, R = Math.min(w, h * .94) / 2 * .94; if (R < 24) return;
+  spinV = lerp(spinV, SPIN[state], clamp(dt * 3)); rot += spinV * dt;
+  const e = theme.energy, L = env, th = state === 'thinking', alr = state === 'alert';
+  const vis = i => sm(clamp((bootP - i * .1) / .22));
+  x.save();
+  if (alr) x.translate((Math.random() - .5) * 3, (Math.random() - .5) * 3);
+  x.globalCompositeOperation = 'lighter';
+  let g = x.createRadialGradient(cx, cy, R * .05, cx, cy, R * .98);
+  g.addColorStop(0, rgba((.24 * e + L * .3) * vis(0))); g.addColorStop(.55, rgba(.05 * e * vis(0))); g.addColorStop(1, rgba(0));
+  x.fillStyle = g; x.fillRect(0, 0, w, h);
+
+  // outer tick ring with travelling highlight
+  let v = vis(1); const hl = (T * .6) % TAU; x.lineWidth = 1.5;
+  for (let i = 0; i < 120; i++){
+    const a = i / 120 * TAU + rot * .25, long = i % 10 === 0, r1 = R * .985, r2 = r1 - (long ? R * .05 : R * .024);
+    let d = Math.abs(((a - hl) % TAU + TAU) % TAU); d = Math.min(d, TAU - d);
+    x.strokeStyle = rgba(((long ? .55 : .26) + .6 * Math.exp(-d * d * 5)) * v * e);
+    x.beginPath(); x.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); x.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2); x.stroke();
+  }
+  // arc brackets and dashed rings
+  v = vis(2); x.lineWidth = 3; x.strokeStyle = rgba(.75 * v * e);
+  for (let k = 0; k < 3; k++){ const a0 = -rot * .6 + k * TAU / 3; x.beginPath(); x.arc(cx, cy, R * .88, a0, a0 + 1.15); x.stroke(); }
+  x.lineWidth = 1; x.strokeStyle = rgba(.28 * v * e); x.setLineDash([3, 7]);
+  x.beginPath(); x.arc(cx, cy, R * .84, 0, TAU); x.stroke();
+  x.beginPath(); x.arc(cx, cy, R * .915, 0, TAU); x.stroke(); x.setLineDash([]);
+  // voice spikes
+  v = vis(3); const M = 96, r0 = R * .64; x.lineWidth = Math.max(1.5, R * .011);
+  for (let i = 0; i < M; i++){
+    const j = i < M / 2 ? i : M - 1 - i, bin = Math.min(N - 1, Math.floor(j / (M / 2) * N * .75)), s = spec[bin];
+    const len = R * (.025 + .27 * s), a = i / M * TAU - rot * .12;
+    x.strokeStyle = rgba((.3 + .7 * s) * v * e);
+    x.beginPath(); x.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); x.lineTo(cx + Math.cos(a) * (r0 + len), cy + Math.sin(a) * (r0 + len)); x.stroke();
+  }
+  // mid rings
+  v = vis(4); x.lineWidth = 1; x.strokeStyle = rgba(.32 * v * e); x.beginPath(); x.arc(cx, cy, R * .6, 0, TAU); x.stroke();
+  x.lineWidth = 3; x.strokeStyle = rgba(.9 * v * e);
+  for (let k = 0; k < 3; k++){ const a0 = rot * 1.4 + k * TAU / 3; x.beginPath(); x.arc(cx, cy, R * .6, a0, a0 + .55); x.stroke(); }
+  x.strokeStyle = rgba(.5 * v * e); x.lineWidth = 2;
+  for (let k = 0; k < 2; k++){ const a0 = -rot * 2 + k * Math.PI; x.beginPath(); x.arc(cx, cy, R * .57, a0, a0 + .3); x.stroke(); }
+  // segmented ring with chase
+  v = vis(5); const head = (T * 16) % 36; x.lineWidth = Math.max(3, R * .022);
+  for (let i = 0; i < 36; i++){
+    const a0 = i / 36 * TAU + rot * .3, dist = ((head - i) % 36 + 36) % 36;
+    const b = th ? Math.max(0, 1 - dist / 10) : .35 + .5 * L;
+    x.strokeStyle = rgba((.15 + .75 * b) * v * e); x.beginPath(); x.arc(cx, cy, R * .5, a0, a0 + TAU / 36 * .7); x.stroke();
+  }
+  // hexagon and triangle
+  v = vis(6); x.lineWidth = 1.5; x.strokeStyle = rgba(.55 * v * e); x.beginPath();
+  for (let i = 0; i <= 6; i++){ const a = i / 6 * TAU - rot * .5; const px = cx + Math.cos(a) * R * .38, py = cy + Math.sin(a) * R * .38; i ? x.lineTo(px, py) : x.moveTo(px, py); }
+  x.stroke(); x.strokeStyle = rgba(.65 * v * e); x.fillStyle = rgba(.05 * v * e); x.beginPath();
+  for (let i = 0; i <= 3; i++){ const a = i / 3 * TAU + rot * .9; const px = cx + Math.cos(a) * R * .27, py = cy + Math.sin(a) * R * .27; i ? x.lineTo(px, py) : x.moveTo(px, py); }
+  x.fill(); x.stroke();
+  // orbiting nodes while thinking
+  if (th){
+    for (let k = 0; k < 3; k++) for (let s = 0; s < 7; s++){
+      const a = T * 3.2 - s * .09 + k * TAU / 3;
+      x.fillStyle = rgba((1 - s / 7) * .95); x.beginPath(); x.arc(cx + Math.cos(a) * R * .5, cy + Math.sin(a) * R * .5, Math.max(1.5, R * .014) * (1 - s / 9), 0, TAU); x.fill();
+    }
+  }
+  // shockwaves
+  for (let i = shocks.length - 1; i >= 0; i--){
+    const s = shocks[i]; s.r += dt * R * 1.5; const f = s.r / (R * 1.3);
+    if (f >= 1){ shocks.splice(i, 1); continue; }
+    x.lineWidth = 3 * (1 - f) + 1; x.strokeStyle = rgba((1 - f) * .9); x.beginPath(); x.arc(cx, cy, s.r, 0, TAU); x.stroke();
+  }
+  // heart of the core
+  const breath = 1 + .07 * Math.sin(T * 1.7) * (1 - L) + L * .65 * e + (state === 'wake' ? .35 : 0);
+  const r = R * .14 * vis(7) * breath;
+  g = x.createRadialGradient(cx, cy, 0, cx, cy, r * 3.4);
+  g.addColorStop(0, `rgba(255,255,255,${clamp(.95 * vis(7))})`); g.addColorStop(.18, rgba(.95 * vis(7)));
+  g.addColorStop(.5, rgba((.26 + .32 * L) * vis(7))); g.addColorStop(1, rgba(0));
+  x.fillStyle = g; x.beginPath(); x.arc(cx, cy, r * 3.4, 0, TAU); x.fill();
+  x.lineWidth = 2; x.strokeStyle = rgba(.85 * vis(7)); x.beginPath(); x.arc(cx, cy, r * 1.35, 0, TAU); x.stroke();
+  x.lineWidth = 1; x.strokeStyle = rgba(.3 * vis(7)); x.beginPath(); x.arc(cx, cy, r * 1.75 + L * R * .03, 0, TAU); x.stroke();
+  x.restore();
+}
+
+/* ---------- radar ---------- */
+const blips = []; let sweep = 0;
+function spawnBlip(){
+  const hot = Math.random() < (state === 'alert' ? .6 : .1);
+  return {a:Math.random() * TAU, r:.22 + Math.random() * .72, vr:hot ? -.015 : (Math.random() - .5) * .01, hot, lit:0, life:10 + Math.random() * 18};
+}
+for (let i = 0; i < 6; i++) blips.push(spawnBlip());
+function drawRadar(dt){
+  const {x, w, h, dpr} = cv.radar; x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 8; if (R < 20) return;
+  const e = theme.energy, v = sm(clamp((bootP - .15) / .3));
+  x.lineWidth = 1; x.strokeStyle = rgba(.3 * v);
+  for (let i = 1; i <= 4; i++){ x.beginPath(); x.arc(cx, cy, R * i / 4, 0, TAU); x.stroke(); }
+  x.beginPath(); x.moveTo(cx - R, cy); x.lineTo(cx + R, cy); x.moveTo(cx, cy - R); x.lineTo(cx, cy + R); x.stroke();
+  for (let i = 0; i < 72; i++){
+    const a = i / 72 * TAU, l = i % 6 === 0 ? 8 : 4; x.strokeStyle = rgba((i % 6 === 0 ? .6 : .3) * v);
+    x.beginPath(); x.moveTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); x.lineTo(cx + Math.cos(a) * (R - l), cy + Math.sin(a) * (R - l)); x.stroke();
+  }
+  x.fillStyle = rgba(.8 * v); x.font = `${Math.max(9, R * .07)}px "Share Tech Mono", monospace`; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText('N', cx, cy - R + 20); x.fillText('S', cx, cy + R - 20); x.fillText('E', cx + R - 18, cy); x.fillText('W', cx - R + 18, cy);
+  const sp = SWEEP[state] * (reduce ? .4 : 1); sweep = (sweep + sp * dt) % TAU;
+  x.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 34; i++){
+    x.fillStyle = rgba(.2 * (1 - i / 34) * e * v); x.beginPath(); x.moveTo(cx, cy);
+    x.arc(cx, cy, R, sweep - (i + 1) * .035, sweep - i * .035); x.closePath(); x.fill();
+  }
+  x.strokeStyle = rgba(.95 * v); x.lineWidth = 1.6; x.beginPath(); x.moveTo(cx, cy); x.lineTo(cx + Math.cos(sweep) * R, cy + Math.sin(sweep) * R); x.stroke();
+  const want = state === 'alert' ? 9 : 6;
+  while (blips.length < want) blips.push(spawnBlip());
+  for (let i = blips.length - 1; i >= 0; i--){
+    const b = blips[i]; b.life -= dt; b.r = clamp(b.r + b.vr * dt, .1, .98);
+    if (b.life <= 0 || (b.hot && b.r <= .12) || blips.length > want + 1){ blips.splice(i, 1); continue; }
+    const d = ((sweep - b.a) % TAU + TAU) % TAU; if (d < sp * dt + .03) b.lit = 1;
+    b.lit = Math.max(0, b.lit - dt * .32);
+    const px = cx + Math.cos(b.a) * b.r * R, py = cy + Math.sin(b.a) * b.r * R, col = b.hot ? [255, 184, 77] : theme.rgb;
+    const al = (.18 + .82 * b.lit) * v; x.fillStyle = rgba(al, col); x.beginPath(); x.arc(px, py, 2.4 + b.lit * 2.2, 0, TAU); x.fill();
+    if (b.hot){ x.strokeStyle = rgba(al, col); x.lineWidth = 1.2; const s = 8 + b.lit * 3; x.strokeRect(px - s, py - s, s * 2, s * 2); }
+  }
+  x.globalCompositeOperation = 'source-over';
+  x.fillStyle = rgba(1); x.beginPath(); x.arc(cx, cy, 2.5, 0, TAU); x.fill();
+}
+
+/* ---------- spectrum ---------- */
+function drawSpec(dt){
+  const {x, w, h, dpr} = cv.spec; x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, w, h);
+  if (w < 40 || h < 20) return;
+  const cy = h / 2, bw = w / N, e = theme.energy, v = sm(clamp((bootP - .3) / .3));
+  x.strokeStyle = rgba(.2 * v); x.lineWidth = 1; x.beginPath(); x.moveTo(0, cy); x.lineTo(w, cy); x.stroke();
+  for (let i = 0; i < N; i++){
+    const s = spec[i] * v, bh = Math.max(1, s * (h * .46)), px = i * bw + bw * .18;
+    x.fillStyle = rgba((.35 + .65 * s) * e); x.fillRect(px, cy - bh, bw * .64, bh * 2);
+    x.fillStyle = rgba(.9); const pk = peak[i] * v * h * .46; x.fillRect(px, cy - pk - 3, bw * .64, 1.5); x.fillRect(px, cy + pk + 1.5, bw * .64, 1.5);
+  }
+  // waveform line: gold while speaking, accent otherwise
+  const col = state === 'speaking' ? [255, 184, 77] : theme.rgb, amp = Math.min(1, env * 1.4) * h * .34 * v;
+  x.lineWidth = 1.6; x.strokeStyle = rgba(.95, col); x.beginPath();
+  for (let px = 0; px <= w; px += 3){
+    const u = px / w; let y;
+    if (state === 'alert') y = ((Math.floor(px / 6 + T * 30) % 2) ? 1 : -1) * amp * (.4 + .6 * nz(px + Math.floor(T * 20)));
+    else if (state === 'thinking') y = Math.sin(u * 40 + T * 9) * amp * .5 * Math.exp(-Math.pow((u - ((T * .5) % 1)) * 6, 2)) + Math.sin(u * 8 - T * 3) * 1.5;
+    else y = (Math.sin(u * 22 + T * 9) * .55 + Math.sin(u * 51 - T * 13) * .3 + Math.sin(u * 9 + T * 4) * .15) * amp * Math.sin(u * Math.PI) + Math.sin(u * 12 + T) * 1;
+    px ? x.lineTo(px, cy + y) : x.moveTo(px, cy + y);
+  }
+  x.stroke();
+}
+
+/* ---------- background particles ---------- */
+const parts = Array.from({length:70}, () => ({x:Math.random(), y:Math.random(), z:.3 + Math.random() * .7, s:nz(Math.random() * 99)}));
+const streams = [];
+function drawBg(dt){
+  const {x, w, h, dpr} = cv.bg; x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, w, h);
+  const e = theme.energy;
+  for (const p of parts){
+    p.y -= dt * .012 * p.z * (state === 'alert' ? 2 : 1); p.x += Math.sin(T * .2 + p.s * 9) * dt * .002;
+    if (p.y < -.02){ p.y = 1.02; p.x = Math.random(); }
+    x.fillStyle = rgba((.15 + .35 * p.z) * Math.min(1, e + .3)); x.fillRect(p.x * w, p.y * h, 1.5 * p.z + .5, 1.5 * p.z + .5);
+  }
+  if (Math.random() < dt * (state === 'thinking' ? 6 : 1.2)) streams.push({x:Math.random(), y:Math.random() * .6, l:.08 + Math.random() * .2, a:1});
+  for (let i = streams.length - 1; i >= 0; i--){
+    const s = streams[i]; s.a -= dt * 1.2; s.y += dt * .25; if (s.a <= 0){ streams.splice(i, 1); continue; }
+    const g = x.createLinearGradient(0, s.y * h, 0, (s.y + s.l) * h); g.addColorStop(0, rgba(0)); g.addColorStop(1, rgba(.5 * s.a));
+    x.fillStyle = g; x.fillRect(s.x * w, s.y * h, 1, s.l * h);
+  }
+}
+
+/* ---------- reticle ---------- */
+const ret = $('#reticle'), rl = $('#rl'); let mx = -200, my = -200, rx = -200, ry = -200, rw = 44, rh = 44, lockEl = null;
+addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch') return;
+  mx = e.clientX; my = e.clientY;
+  const p = e.target.closest ? e.target.closest('[data-lock]') : null;
+  if (p !== lockEl){
+    if (lockEl) lockEl.classList.remove('locked');
+    lockEl = p; ret.classList.toggle('lock', !!p); if (p) p.classList.add('locked');
+  }
+});
+document.addEventListener('pointerleave', () => { mx = my = -200; if (lockEl) lockEl.classList.remove('locked'); lockEl = null; ret.classList.remove('lock'); });
+function stepReticle(dt){
+  let tx = mx, ty = my, tw = 44, th = 44;
+  if (lockEl){ const r = lockEl.getBoundingClientRect(); tx = r.left + r.width / 2; ty = r.top + r.height / 2; tw = r.width + 10; th = r.height + 10; }
+  const k = clamp(dt * 14); rx = lerp(rx, tx, k); ry = lerp(ry, ty, k); rw = lerp(rw, tw, k); rh = lerp(rh, th, k);
+  ret.style.width = rw.toFixed(1) + 'px'; ret.style.height = rh.toFixed(1) + 'px';
+  ret.style.transform = `translate(${(rx - rw / 2).toFixed(1)}px,${(ry - rh / 2).toFixed(1)}px)`;
+  rl.textContent = lockEl ? 'LOCK // ' + lockEl.dataset.lock : `X ${p2(Math.round(mx / 10) % 100)}${p2(Math.round(mx) % 100)}  Y ${p2(Math.round(my / 10) % 100)}${p2(Math.round(my) % 100)}`;
+}
+
+/* ---------- edge labels, ticker ---------- */
+let frames = 0, fps = 60, pkt = 48213;
+const hex = n => Array.from({length:n}, () => Math.floor(Math.random() * 16).toString(16)).join('').toUpperCase();
+function tickLabels(){
+  pkt += Math.floor(40 + Math.random() * 400);
+  $('#lbl-tl').textContent = `SYS ${hex(4)}-${hex(4)}\nFPS ${fps}\nPROC ${hex(6)}`;
+  $('#lbl-tr').textContent = `PKT ${pkt}\nENC AES-256\nNODE ${hex(3)}`;
+  $('#lbl-bl').textContent = `AUDIO ${state === 'speaking' ? 'TX' : state === 'listening' ? 'RX' : '--'}\nCAL ${(99.2 + Math.random() * .7).toFixed(1)}%\nSEQ ${hex(8)}`;
+  $('#lbl-br').textContent = `PROJ ${(.4 + Math.random() * .2).toFixed(3)}\nSCAN ${p2(Math.floor(sweep / TAU * 99))}\nREV 7.3.1`;
+}
+$('#ticker').textContent = Array(2).fill('ARC REACTOR OUTPUT NOMINAL  //  HOLOGRAPHIC PROJECTION STABLE  //  SENSOR SUITE ONLINE  //  VOICE RECOGNITION ACTIVE  //  PERIMETER MONITORING  //  NEURAL CORE SYNCHRONISED  //  ').join('');
+
+/* ---------- boot ---------- */
+const BOOT = [
+  [250, 'Initialising J.A.R.V.I.S. kernel.'],
+  [800, 'Arc reactor link established.'],
+  [1300, 'Calibrating holographic projectors.'],
+  [1800, 'Sensor suite online: radar, audio, telemetry.'],
+  [2300, 'Voice recognition online.']
+];
+const bootStart = performance.now();
+BOOT.forEach(([ms, t]) => setTimeout(() => log(t, 'sys'), ms));
+setTimeout(() => {
+  const h = new Date().getHours(), g = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+  setState('idle'); log('Neural core synchronised. All systems nominal.', 'sys');
+  say(`${g}, sir. All systems are online.`, {after:'idle'});
+  $('#boot').classList.add('done');
+}, 2900);
+
+/* idle chatter */
+const CHATTER = ['Telemetry nominal.', 'Perimeter sweep complete. No contacts of interest.', 'Arc output stable.', 'Audio calibration within tolerance.', 'Holographic projection integrity at 99 percent.', 'Background diagnostics complete.'];
+function chatter(){
+  if (demoOn && state === 'idle') log(pick(CHATTER), 'sys');
+  setTimeout(chatter, 7000 + Math.random() * 6000);
+}
+setTimeout(chatter, 9000);
+
+/* ---------- main loop ---------- */
+let last = performance.now(), gAcc = 0, lAcc = 0, cAcc = 0, fAcc = 0, themeDirty = true;
+function frame(ts){
+  const dt = Math.min(.05, (ts - last) / 1000) * (reduce ? .45 : 1), real_dt = Math.min(.05, (ts - last) / 1000); last = ts; T += dt;
+  fAcc += real_dt; frames++; if (fAcc >= 1){ fps = Math.round(frames / fAcc); frames = 0; fAcc = 0; }
+  bootP = state === 'boot' ? clamp((ts - bootStart) / 2700) : 1;
+  const bp = $('#bootbar'); if (state === 'boot'){ bp.style.width = (bootP * 100).toFixed(0) + '%'; $('#bootpct').textContent = String(Math.round(bootP * 100)).padStart(3, '0'); }
+  // theme
+  const s = STATES[state]; let d = 0;
+  for (let i = 0; i < 3; i++){ const n = lerp(theme.rgb[i], s.rgb[i], clamp(dt * 5)); d += Math.abs(n - theme.rgb[i]); theme.rgb[i] = n; }
+  theme.energy = lerp(theme.energy, s.energy, clamp(dt * 4));
+  if (d > .05 || themeDirty){ root.style.setProperty('--a', theme.rgb.map(Math.round).join(' ')); themeDirty = false; }
+  stepVoice(dt);
+  drawBg(dt); drawCore(dt); drawRadar(dt); drawSpec(dt);
+  stepReticle(real_dt);
+  gAcc += real_dt; if (gAcc > .45){ gAcc = 0; stepGauges(); drawSpark(); }
+  cAcc += real_dt; if (cAcc > .1){ cAcc = 0; tickClock(); }
+  lAcc += real_dt; if (lAcc > .7){ lAcc = 0; tickLabels(); }
+  requestAnimationFrame(frame);
+}
+tickClock(); tickLabels(); uiState(); stepGauges();
+requestAnimationFrame(frame);
+
+/* ---------- public API ---------- */
+const api = {
+  version:'7.3.1',
+  setStatus(s){ if (!STATES[s]) return false; if (s === 'wake'){ wake(); return true; } if (s === 'alert'){ raiseAlert(); return true; } cancelSpeech(); setState(s); return true; },
+  setVoice(v){ ext.voice = clamp(+v || 0); ext.voiceUntil = performance.now() + 1200; },
+  setSpectrum(a){ if (a && a.length){ ext.spec = a; ext.specUntil = performance.now() + 1200; } else ext.specUntil = 0; },
+  setGauges(o){ if (!o) return; for (const k of Object.keys(o)){ if (k in ext.g) ext.g[k] = o[k] === null || o[k] === undefined ? null : +o[k]; } },
+  log(text, kind){ log(text, kind || 'sys'); },
+  say, wake, standby, alert:raiseAlert,
+  demo(on){ demoOn = !!on; },
+  onCommand:null
+};
+window.JARVIS = api;
+})();
+</script>
+
+<script src="bridge.js"></script>
+</body></html>

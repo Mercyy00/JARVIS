@@ -13,6 +13,7 @@ import csv
 import ctypes
 import io
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -21,6 +22,10 @@ from datetime import datetime
 from urllib.parse import quote_plus
 
 import psutil
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+from . import office_skills as _office
 
 RAAGA_APP_PATH = os.path.expandvars(r"%USERPROFILE%\Desktop\raaga.lnk")
 if not os.path.exists(RAAGA_APP_PATH):
@@ -878,7 +883,362 @@ def list_routines(memory) -> str:
     return "Routines ready to go: " + ", ".join(routines.list_names()) + "."
 
 
+def run_terminal_command(memory, command: str) -> str:
+    """Execute a PowerShell or CMD command directly on Jay's computer and return output."""
+    try:
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=25,
+            cwd=str(ROOT)
+        )
+        out = (res.stdout or "").strip()
+        err = (res.stderr or "").strip()
+        combined = out
+        if err:
+            combined = (combined + "\n[STDERR]: " + err).strip() if combined else f"[STDERR]: {err}"
+        if not combined:
+            return f"Command executed successfully (exit code {res.returncode}) with no output."
+        if len(combined) > 2000:
+            combined = combined[:2000] + "\n...[output truncated]"
+        return f"Output:\n{combined}"
+    except subprocess.TimeoutExpired:
+        return "Command timed out after 25 seconds."
+    except Exception as exc:
+        return f"Error executing command: {exc}"
+
+
+def press_hotkey(memory, combo: str) -> str:
+    """Press a keyboard shortcut/hotkey (e.g. 'ctrl+c', 'ctrl+v', 'alt+tab', 'win+d', 'enter', 'esc')."""
+    combo = combo.strip().lower()
+    sendkeys_map = {
+        "ctrl+c": "^c", "ctrl+v": "^v", "ctrl+x": "^x", "ctrl+z": "^z", "ctrl+y": "^y",
+        "ctrl+a": "^a", "ctrl+s": "^s", "ctrl+w": "^w", "ctrl+t": "^t", "ctrl+f": "^f",
+        "alt+f4": "%{F4}", "alt+tab": "%{TAB}", "enter": "{ENTER}", "esc": "{ESC}",
+        "escape": "{ESC}", "space": " ", "tab": "{TAB}", "backspace": "{BACKSPACE}",
+        "delete": "{DELETE}"
+    }
+    try:
+        if combo in ("win+d", "windows+d"):
+            subprocess.run(["powershell", "-NoProfile", "-Command", "(New-Object -ComObject Shell.Application).ToggleDesktop()"], capture_output=True)
+            return "Toggled show desktop."
+        if combo in ("win+e", "windows+e"):
+            subprocess.run(["explorer.exe"], capture_output=True)
+            return "Opened File Explorer."
+        
+        sk = sendkeys_map.get(combo)
+        if not sk:
+            parts = combo.split("+")
+            sk_parts = []
+            for p in parts:
+                p = p.strip()
+                if p in ("ctrl", "control"): sk_parts.append("^")
+                elif p == "alt": sk_parts.append("%")
+                elif p == "shift": sk_parts.append("+")
+                elif p in ("enter", "return"): sk_parts.append("{ENTER}")
+                elif p in ("esc", "escape"): sk_parts.append("{ESC}")
+                elif p == "tab": sk_parts.append("{TAB}")
+                elif len(p) == 1: sk_parts.append(p)
+                else: sk_parts.append(f"{{{p.upper()}}}")
+            sk = "".join(sk_parts)
+            
+        ps_code = f"$w = New-Object -ComObject wscript.shell; Start-Sleep -Milliseconds 100; $w.SendKeys('{sk}')"
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps_code], capture_output=True)
+        return f"Pressed '{combo}'."
+    except Exception as exc:
+        return f"Failed to press hotkey: {exc}"
+
+
+def click_mouse(memory, x: int = None, y: int = None, button: str = "left", double: bool = False) -> str:
+    """Click or double-click the mouse at specified coordinates (x, y) or at current cursor."""
+    try:
+        user32 = ctypes.windll.user32
+        if x is not None and y is not None:
+            user32.SetCursorPos(int(x), int(y))
+            time.sleep(0.05)
+        btn = button.lower()
+        if btn == "right":
+            down, up = 0x0008, 0x0010
+        else:
+            down, up = 0x0002, 0x0004
+            
+        user32.mouse_event(down, 0, 0, 0, 0)
+        user32.mouse_event(up, 0, 0, 0, 0)
+        if double:
+            time.sleep(0.08)
+            user32.mouse_event(down, 0, 0, 0, 0)
+            user32.mouse_event(up, 0, 0, 0, 0)
+        loc_str = f"at ({x}, {y})" if x is not None and y is not None else "at current cursor"
+        act_str = f"Double-clicked {btn} button" if double else f"Clicked {btn} button"
+        return f"{act_str} {loc_str}."
+    except Exception as exc:
+        return f"Failed to click mouse: {exc}"
+
+
+def write_file(memory, path: str, content: str) -> str:
+    """Create or write content to a text or code file."""
+    try:
+        full_path = _resolve_path(path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return f"Saved file to '{full_path}' ({len(content)} characters)."
+    except Exception as exc:
+        return f"Failed to write file: {exc}"
+
+
+def search_files(memory, query: str, folder: str = "D:\\engineers\\JAY") -> str:
+    """Search for files and directories matching query name."""
+    try:
+        root_dir = _resolve_path(folder)
+        if not os.path.exists(root_dir):
+            root_dir = "D:\\engineers\\JAY"
+            if not os.path.exists(root_dir):
+                root_dir = os.path.expanduser("~")
+        matches = []
+        q_lower = query.lower()
+        for root, dirs, files in os.walk(root_dir):
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('node_modules', '__pycache__', 'venv', '.venv')]
+            for f in files:
+                if q_lower in f.lower():
+                    matches.append(os.path.join(root, f))
+                    if len(matches) >= 15:
+                        break
+            if len(matches) >= 15:
+                break
+        if not matches:
+            return f"No files found matching '{query}' in {root_dir}."
+        res = [f"Found {len(matches)} match(es) for '{query}':"]
+        for m in matches:
+            res.append(f"  - {m}")
+        return "\n".join(res)
+    except Exception as exc:
+        return f"Error searching files: {exc}"
+
+
+def send_whatsapp_message(memory, phone: str = "", message: str = "", open_chat: bool = True) -> str:
+    """Send a WhatsApp TEXT message. Defaults to Jay's own number when none given.
+    (Text only — to send a FILE to his phone, use send_file_to_phone / Telegram.)"""
+    import urllib.parse
+    phone_clean = re.sub(r'[^0-9+]', '', phone or "").strip()
+    if not phone_clean:
+        try:
+            from .config import load_config
+            phone_clean = re.sub(r'[^0-9+]', '', str(load_config().get("user", {}).get("whatsapp", "")))
+        except Exception:
+            phone_clean = ""
+    if phone_clean and not phone_clean.startswith("+") and len(phone_clean) == 10:
+        phone_clean = "91" + phone_clean
+    encoded_msg = urllib.parse.quote(message or "")
+    if phone_clean:
+        url = f"https://web.whatsapp.com/send?phone={phone_clean}&text={encoded_msg}"
+    else:
+        url = f"https://web.whatsapp.com/send?text={encoded_msg}" if message else "https://web.whatsapp.com"
+    _open_in_browser(url)
+    return f"Opened WhatsApp to {phone_clean or 'WhatsApp'}, Sir — your message is ready, just tap send."
+
+
+def mobile_phone_gateway(memory, action: str = "status") -> str:
+    """Get the local network URL and setup info so Jay can control JARVIS directly from his phone."""
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        local_ip = "192.168.31.12"
+    pin = ""
+    try:
+        from .config import load_config
+        pin = str(load_config().get("remote", {}).get("pin", "") or "")
+    except Exception:
+        pass
+    url = f"http://{local_ip}:8765" + (f"/?pin={pin}" if pin else "")
+    return (
+        f"Sir, your mobile phone gateway is ready!\n"
+        f"Connect your phone to the same Wi-Fi network and open:\n"
+        f"-> {url}\n"
+        + (f"PIN: {pin}\n" if pin else "(No PIN set — remote access is disabled for safety.)\n")
+        + f"\nFrom your phone you can:\n"
+        f"1. Tap the mic to speak to me anywhere in your room.\n"
+        f"2. Type commands and chat in real time.\n"
+        f"3. Trigger any PC skill, run code, or view system status."
+    )
+
+
+def web_answer(memory, query: str) -> str:
+    """Look something up and answer concisely — Wikipedia for facts, with the
+    model's own knowledge as backup. Use for 'what/who is', facts, definitions."""
+    import urllib.request
+    import urllib.parse
+    import json
+    context = ""
+    try:
+        s = ("https://en.wikipedia.org/w/api.php?action=query&list=search&format=json"
+             "&srlimit=1&srsearch=" + urllib.parse.quote(query))
+        sr = json.loads(urllib.request.urlopen(
+            urllib.request.Request(s, headers={"User-Agent": "RustyAI/1.0"}), timeout=8).read())
+        hits = sr.get("query", {}).get("search", [])
+        if hits:
+            title = hits[0]["title"].replace(" ", "_")
+            su = "https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(title)
+            sd = json.loads(urllib.request.urlopen(
+                urllib.request.Request(su, headers={"User-Agent": "RustyAI/1.0"}), timeout=8).read())
+            context = (sd.get("extract") or "")[:2000]
+    except Exception:
+        context = ""
+    cfg = _VISION_CONFIG
+    if not cfg:
+        try:
+            from .config import load_config
+            cfg = load_config().get("llm")
+        except Exception:
+            cfg = None
+    if not cfg or not cfg.get("api_key"):
+        return context[:400] if context else "I couldn't look that up right now, Sir."
+    try:
+        from .llm import make_client
+        client = make_client({"llm": cfg})
+        sysmsg = ("You are Rusty. Answer in one or two spoken sentences. Use the reference if provided; "
+                  "otherwise answer from your own knowledge. Be accurate and concise.")
+        user = f"Question: {query}" + (f"\n\nReference:\n{context}" if context else "")
+        resp = client.complete(sysmsg, [{"role": "user", "content": user}], [])
+        return (resp.text or "").strip() or (context[:400] if context else "I'm not certain on that one, Sir.")
+    except Exception:
+        return context[:400] if context else "I couldn't look that up right now, Sir."
+
+
+def send_file_to_phone(memory, path: str) -> str:
+    """Send a file (or every file in a folder) from the PC to Jay's Telegram chat."""
+    try:
+        from .config import load_config
+        rc = load_config().get("remote", {})
+    except Exception:
+        rc = {}
+    token, chat_id = rc.get("telegram_token", ""), rc.get("telegram_chat_id", "")
+    if not token or not chat_id:
+        return "Telegram isn't linked yet, Sir — set it up first."
+    try:
+        import requests
+    except Exception:
+        return "The requests library isn't available to upload files, Sir."
+    full = _resolve_path(path)
+    if not os.path.exists(full):
+        return f"I couldn't find '{path}', Sir."
+    if os.path.isdir(full):
+        targets = [os.path.join(full, f) for f in sorted(os.listdir(full))
+                   if os.path.isfile(os.path.join(full, f))][:10]
+    else:
+        targets = [full]
+    if not targets:
+        return f"Nothing to send in '{path}', Sir."
+    sent, skipped = 0, 0
+    for fp in targets:
+        try:
+            if os.path.getsize(fp) > 49 * 1024 * 1024:
+                skipped += 1
+                continue
+            with open(fp, "rb") as fh:
+                r = requests.post(
+                    f"https://api.telegram.org/bot{token}/sendDocument",
+                    data={"chat_id": chat_id},
+                    files={"document": (os.path.basename(fp), fh)},
+                    timeout=180,
+                )
+            if r.ok and r.json().get("ok"):
+                sent += 1
+            else:
+                skipped += 1
+        except Exception:
+            skipped += 1
+    if sent:
+        extra = f" ({skipped} skipped — too big or failed)" if skipped else ""
+        return f"Sent {sent} file(s) to your Telegram, Sir.{extra}"
+    return "Couldn't send that, Sir — the file may be too large (50 MB limit) or the upload failed."
+
+
+def backup_to_drive(memory, path: str, dest: str = "") -> str:
+    """Back up a file or folder to Google Drive via rclone, so Jay can reach it
+    anywhere. He names what to back up; it goes under the configured base folder."""
+    try:
+        from .config import load_config
+        dc = load_config().get("drive", {})
+    except Exception:
+        dc = {}
+    rclone = dc.get("rclone_path", "rclone")
+    remote = dc.get("remote", "gdrive")
+    base = dc.get("base_folder", "RustyBackup")
+    full = _resolve_path(path)
+    if not os.path.exists(full):
+        return f"I couldn't find '{path}', Sir."
+    name = dest or os.path.basename(full.rstrip("/\\")) or "misc"
+    try:
+        if os.path.isdir(full):
+            cmd = [rclone, "copy", full, f"{remote}:{base}/{name}", "--transfers=4"]
+        else:
+            cmd = [rclone, "copyto", full, f"{remote}:{base}/{os.path.basename(full)}"]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+        if res.returncode == 0:
+            return f"Backed up '{os.path.basename(full)}' to your Drive ({base}/{name}), Sir — reachable from anywhere now."
+        err = (res.stderr or "").strip()
+        if "didn't find section" in err.lower() or "couldn't find" in err.lower() or not err:
+            return "Google Drive isn't linked yet, Sir — run 'rclone config' once to connect your account."
+        return f"Backup had an issue, Sir: {err[:300]}"
+    except FileNotFoundError:
+        return "I need rclone installed to reach Google Drive, Sir — it's not set up yet."
+    except Exception as exc:
+        return f"Backup failed, Sir: {exc}"
+
+
+def github(memory, command: str, confirm: bool = False) -> str:
+    """Run a GitHub CLI (gh) command to manage Jay's GitHub — repos, issues, PRs,
+    releases, gists, actions, `api` calls, etc. Compose the gh subcommand (without
+    the leading 'gh'). Destructive commands are held back until confirm=True."""
+    import shlex
+    cmd = (command or "").strip()
+    if cmd.lower().startswith("gh "):
+        cmd = cmd[3:].strip()
+    if not cmd:
+        return "What GitHub command would you like, Sir?"
+    if (not confirm) and any(d in cmd.lower() for d in ("delete", "destroy", "archive")):
+        return f"That GitHub command looks destructive, Sir — confirm and I'll run it: gh {cmd}"
+    try:
+        args = ["gh"] + shlex.split(cmd)
+    except Exception:
+        args = ["gh"] + cmd.split()
+    try:
+        res = subprocess.run(args, capture_output=True, text=True, timeout=90, cwd=ROOT)
+        out = (res.stdout or "").strip() or (res.stderr or "").strip()
+        if "not logged" in out.lower() or "gh auth login" in out.lower():
+            return "GitHub isn't linked yet, Sir — connect your account first (I need a token)."
+        if len(out) > 1500:
+            out = out[:1500] + " …(truncated)"
+        return out or "Done, Sir."
+    except FileNotFoundError:
+        return "The GitHub CLI (gh) isn't installed, Sir."
+    except subprocess.TimeoutExpired:
+        return "That GitHub command took too long, Sir."
+    except Exception as exc:
+        return f"GitHub command failed, Sir: {exc}"
+
+
 SKILLS = [
+    {"name": "run_terminal_command", "fn": run_terminal_command, "description": "Execute a PowerShell/terminal command on Jay's computer and return output. Use for git, python, npm, system checks, script execution, inspecting files, or diagnostics.",
+     "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The PowerShell or CMD command to execute"}}, "required": ["command"]}},
+    {"name": "press_hotkey", "fn": press_hotkey, "description": "Press a keyboard shortcut/hotkey combo on Windows (e.g. 'ctrl+c', 'ctrl+v', 'alt+tab', 'win+d', 'enter', 'esc').",
+     "parameters": {"type": "object", "properties": {"combo": {"type": "string", "description": "Key combination like 'ctrl+v', 'alt+tab', 'win+d', 'enter'"}}, "required": ["combo"]}},
+    {"name": "click_mouse", "fn": click_mouse, "description": "Click or double-click the mouse at specified coordinates (x, y) or at current cursor position.",
+     "parameters": {"type": "object", "properties": {"x": {"type": "integer", "description": "X coordinate on screen"}, "y": {"type": "integer", "description": "Y coordinate on screen"}, "button": {"type": "string", "description": "'left' or 'right'"}, "double": {"type": "boolean", "description": "True for double click"}}, "required": []}},
+    {"name": "write_file", "fn": write_file, "description": "Create or write content to a text or code file on Jay's computer.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "File path (relative or absolute)"}, "content": {"type": "string", "description": "Text or code content to write"}}, "required": ["path", "content"]}},
+    {"name": "search_files", "fn": search_files, "description": "Search for files and folders by name across Jay's workspace or specified directory.",
+     "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Filename substring or extension to find"}, "folder": {"type": "string", "description": "Root directory to search (default D:\\engineers\\JAY)"}}, "required": ["query"]}},
+    {"name": "send_whatsapp_message", "fn": send_whatsapp_message, "description": "Send a WhatsApp TEXT message. Use ONLY when Jay explicitly says 'WhatsApp'. Text only — it cannot attach files. If no number is given it goes to Jay's own number. To send a FILE to his phone, do NOT use this — use send_file_to_phone.",
+     "parameters": {"type": "object", "properties": {"phone": {"type": "string", "description": "Optional phone number with country code; leave empty to message Jay himself"}, "message": {"type": "string", "description": "Message text to send"}}, "required": ["message"]}},
+    {"name": "mobile_phone_gateway", "fn": mobile_phone_gateway, "description": "Get the mobile connection URL so Jay can control JARVIS directly from his phone browser over Wi-Fi.",
+     "parameters": {"type": "object", "properties": {}, "required": []}},
     {"name": "open_app", "fn": open_app, "description": "Open/launch an application (e.g. brave, chrome, notepad, calculator, explorer).",
      "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "App name"}}, "required": ["name"]}},
     {"name": "open_folder", "fn": open_folder, "description": "Open a folder in File Explorer. Accepts a full path or a shortcut: downloads, documents, desktop, pictures, home.",
@@ -955,8 +1315,30 @@ SKILLS = [
      "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "Folder path or shortcut (default: downloads)"}}, "required": []}},
     {"name": "empty_recycle_bin", "fn": empty_recycle_bin, "description": "Empty the Windows Recycle Bin.",
      "parameters": {"type": "object", "properties": {}, "required": []}},
-    {"name": "web_search", "fn": web_search, "description": "Search Google in the browser.",
+    {"name": "web_search", "fn": web_search, "description": "Open a Google search in the browser (visual). For a spoken answer, prefer web_answer.",
      "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "web_answer", "fn": web_answer, "description": "Search the web and give Jay a concise spoken answer. Use for current events, facts, prices, 'what is / who is / latest', or anything you're unsure about — don't guess, look it up.",
+     "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "What to look up"}}, "required": ["query"]}},
+    {"name": "send_file_to_phone", "fn": send_file_to_phone, "description": "Send a file (or all files in a folder) from the PC to Jay's phone via Telegram. Use whenever Jay asks you to send/share/get a file to his phone or Telegram (e.g. 'send me resume.pdf', 'send me the files in downloads').",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "File or folder path/shortcut (e.g. 'downloads/resume.pdf' or 'downloads')"}}, "required": ["path"]}},
+    {"name": "backup_to_drive", "fn": backup_to_drive, "description": "Back up / upload a file or folder to Jay's Google Drive (via rclone) so he can access it anywhere. Use when he says 'back up X to drive', 'upload X to my drive', 'save this to drive'.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "File or folder to back up (path or shortcut like 'downloads', 'documents', or the project folder)"}}, "required": ["path"]}},
+    {"name": "create_word", "fn": _office.create_word, "description": "Create a Microsoft Word (.docx) document. BEST way: pass a `title` and a `topic` (what it should cover) and Rusty writes a full, comprehensive, multi-page document itself. Only pass `content` if you've already written the text. Use for reports, notes, study material, resumes.",
+     "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "topic": {"type": "string", "description": "What the document should cover / detailed brief — Rusty writes a thorough document from this"}, "content": {"type": "string", "description": "Optional pre-written body ('#'/'##' headings, '- ' bullets, plain text, no markdown emphasis)"}, "filename": {"type": "string"}}, "required": ["title"]}},
+    {"name": "create_pdf", "fn": _office.create_pdf, "description": "Create a real PDF (.pdf) — use whenever Jay asks for a PDF (never create_word for that). BEST way: pass a `title` and a `topic` and Rusty writes a full, comprehensive, multi-page document. Only pass `content` if already written.",
+     "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "topic": {"type": "string", "description": "What the PDF should cover / detailed brief — Rusty writes a thorough document from this"}, "content": {"type": "string", "description": "Optional pre-written body"}, "filename": {"type": "string"}}, "required": ["title"]}},
+    {"name": "create_ppt", "fn": _office.create_ppt, "description": "Create a polished, professionally-designed PowerPoint deck. Just pass a `topic` (a short brief of what the deck is about) and Rusty writes the full, well-structured, themed deck. Optionally choose a theme: midnight, slate, royal, or clean.",
+     "parameters": {"type": "object", "properties": {"topic": {"type": "string", "description": "What the presentation is about (a brief, or detailed instructions)"}, "theme": {"type": "string", "description": "midnight (dark blue), slate (dark), royal (purple/gold), or clean (light). Default midnight"}, "filename": {"type": "string"}}, "required": ["topic"]}},
+    {"name": "create_excel", "fn": _office.create_excel, "description": "Create an Excel (.xlsx) spreadsheet. Provide the data as CSV text (first row = headers). Use for tables, trackers, budgets, data.",
+     "parameters": {"type": "object", "properties": {"title": {"type": "string", "description": "Sheet name"}, "content": {"type": "string", "description": "CSV rows; first row is the header"}, "filename": {"type": "string"}}, "required": ["title", "content"]}},
+    {"name": "create_project", "fn": _office.create_project, "description": "Scaffold a code/web project by writing multiple files at once (e.g. a website). YOU write the code for each file; opens index.html if present. Use for building websites/apps or any multi-file deliverable.",
+     "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Project folder name"}, "files": {"type": "object", "description": "Map of relative filename -> file contents, e.g. {'index.html': '...', 'style.css': '...'}"}}, "required": ["name", "files"]}},
+    {"name": "create_website", "fn": _office.create_website, "description": "Build a complete website from a short description and open it — THE reliable way to make a site/landing page/portfolio. Just pass a name and a description of what you want (theme, sections, style); the full HTML is generated and saved. Prefer this over create_project for websites.",
+     "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Short site name (folder)"}, "description": {"type": "string", "description": "What the site should be: purpose, sections, style/theme (e.g. 'dark-themed developer portfolio with hero, projects, contact')"}}, "required": ["name", "description"]}},
+    {"name": "ask_claude_code", "fn": _office.ask_claude_code, "description": "Delegate a heavy coding/engineering task to the Claude Code CLI running on the PC (it can read/edit code in a folder and run commands). Use for complex multi-file coding, refactors, debugging, or building software.",
+     "parameters": {"type": "object", "properties": {"task": {"type": "string", "description": "The full task/instructions for Claude Code"}, "folder": {"type": "string", "description": "Project folder to work in (default: the Rusty project)"}}, "required": ["task"]}},
+    {"name": "github", "fn": github, "description": "Manage Jay's GitHub via the gh CLI. Pass the gh subcommand WITHOUT 'gh' — e.g. 'repo list', 'repo create myapp --private', 'issue create -R owner/repo -t Title -b Body', 'pr list', 'api user'. Use for anything GitHub.",
+     "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The gh subcommand, e.g. 'repo list --limit 10'"}, "confirm": {"type": "boolean", "description": "Set true to run a destructive command (delete/archive)"}}, "required": ["command"]}},
     {"name": "open_url", "fn": open_url, "description": "Open a specific URL in the browser.",
      "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
     {"name": "open_youtube", "fn": open_youtube, "description": "Open YouTube, optionally searching for something.",

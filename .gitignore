@@ -15,5 +15,11 @@ venv/
 # Runtime logs
 logs/
 
+# Bundled tools (rclone etc.)
+tools/
+
 # Local tooling config
 .claude/
+
+# Personal / college files
+*.pdf
