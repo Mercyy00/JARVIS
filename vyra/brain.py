@@ -122,10 +122,26 @@ class Brain:
         system = self.system_prompt()
 
         try:
+            last_tool_sig = None
+            repeat_tool_count = 0
+
             for _ in range(MAX_TOOL_HOPS):
                 resp = self.client.complete(system, self.history, self.tools)
 
                 if resp.tool_calls:
+                    tool_sig = [(tc.get("name"), json.dumps(tc.get("args"), sort_keys=True)) for tc in resp.tool_calls]
+                    if tool_sig == last_tool_sig:
+                        repeat_tool_count += 1
+                        if repeat_tool_count >= 2:
+                            warn_msg = "Breaking out of repetitive tool loop, Sir — the previous tool call did not change state."
+                            self.history.append({"role": "assistant", "content": warn_msg})
+                            self._trim_history()
+                            self._save_history()
+                            return warn_msg
+                    else:
+                        repeat_tool_count = 0
+                    last_tool_sig = tool_sig
+
                     self.history.append({"role": "assistant", "content": resp.text,
                                          "tool_calls": resp.tool_calls})
                     results = []
@@ -142,23 +158,44 @@ class Brain:
                 return text
 
             return "I got a bit tangled doing that — mind trying again?"
-        except Exception:
+        except Exception as exc:
+            # If intermediate tools executed successfully, preserve progress instead of wiping out everything
+            if any(m.get("role") == "tool" for m in self.history[len(snapshot):]):
+                self.history.append({"role": "assistant", "content": f"I completed intermediate actions, Sir, but hit a provider error ({exc})."})
+                self._save_history()
+                return f"I completed intermediate actions, Sir, but hit a temporary glitch finishing the response."
             self.history = snapshot
             raise
 
     def _trim_history(self):
         """Keep only the most recent turns. Snap the cut forward to a plain
-        user message so the transcript never starts mid tool-call/result pair."""
+        user message and enforce both message count and character budgets."""
         h = self.history
-        if len(h) <= MAX_HISTORY_MESSAGES:
-            return
-        cut = len(h) - MAX_HISTORY_MESSAGES
-        while cut < len(h) and not (
-            h[cut].get("role") == "user" and isinstance(h[cut].get("content"), str)
-        ):
-            cut += 1
-        if cut < len(h):
-            self.history = h[cut:]
+        MAX_CHAR_BUDGET = 36000  # ~9,000 tokens safe limit
+
+        def calc_chars():
+            total = 0
+            for m in h:
+                c = m.get("content")
+                if isinstance(c, str):
+                    total += len(c)
+                elif isinstance(c, list):
+                    total += sum(len(str(x)) for x in c)
+                if m.get("results"):
+                    total += sum(len(str(r.get("output", ""))) for r in m["results"])
+            return total
+
+        while len(h) > 4 and (len(h) > MAX_HISTORY_MESSAGES or calc_chars() > MAX_CHAR_BUDGET):
+            cut = 1
+            while cut < len(h) and not (
+                h[cut].get("role") == "user" and isinstance(h[cut].get("content"), str)
+            ):
+                cut += 1
+            if cut < len(h):
+                h = h[cut:]
+            else:
+                break
+        self.history = h
 
     def summarize_session(self):
         """One-line journal note for next time. Best-effort; never fatal."""

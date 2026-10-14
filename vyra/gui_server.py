@@ -299,17 +299,20 @@ async def run_conversational_followup_loop(loop, mute: bool = False):
         stop_ev = threading.Event()
         last_meter_time = 0.0
 
-        def on_meter(level: float, has_spoken: bool):
+        def on_meter(level: float, has_spoken: bool, spectrum: list[float] | None = None):
             nonlocal last_meter_time
             now = time.time()
-            if now - last_meter_time >= 0.07:
+            if now - last_meter_time >= 0.05:
                 last_meter_time = now
+                payload = {
+                    "type": "audio_meter",
+                    "level": min(1.0, level * 20.0),
+                    "speaking": has_spoken,
+                }
+                if spectrum:
+                    payload["spectrum"] = spectrum
                 asyncio.run_coroutine_threadsafe(
-                    broadcast_ws({
-                        "type": "audio_meter",
-                        "level": min(1.0, level * 20.0),
-                        "speaking": has_spoken,
-                    }),
+                    broadcast_ws(payload),
                     loop,
                 )
 
@@ -396,17 +399,20 @@ async def handle_voice_listen(request):
     loop = asyncio.get_running_loop()
     last_meter_time = 0.0
 
-    def on_audio_level(level: float, has_spoken: bool):
+    def on_audio_level(level: float, has_spoken: bool, spectrum: list[float] | None = None):
         nonlocal last_meter_time
         now = time.time()
-        if now - last_meter_time >= 0.07:
+        if now - last_meter_time >= 0.05:
             last_meter_time = now
+            payload = {
+                "type": "audio_meter",
+                "level": min(1.0, level * 20.0),
+                "speaking": has_spoken,
+            }
+            if spectrum:
+                payload["spectrum"] = spectrum
             asyncio.run_coroutine_threadsafe(
-                broadcast_ws({
-                    "type": "audio_meter",
-                    "level": min(1.0, level * 20.0),
-                    "speaking": has_spoken,
-                }),
+                broadcast_ws(payload),
                 loop,
             )
 
@@ -527,17 +533,20 @@ async def process_wake_event(phrase: str, cmd: str):
 
             last_meter_time = 0.0
 
-            def on_meter(level: float, has_spoken: bool):
+            def on_meter(level: float, has_spoken: bool, spectrum: list[float] | None = None):
                 nonlocal last_meter_time
                 now = time.time()
-                if now - last_meter_time >= 0.07:
+                if now - last_meter_time >= 0.05:
                     last_meter_time = now
+                    payload = {
+                        "type": "audio_meter",
+                        "level": min(1.0, level * 20.0),
+                        "speaking": has_spoken,
+                    }
+                    if spectrum:
+                        payload["spectrum"] = spectrum
                     asyncio.run_coroutine_threadsafe(
-                        broadcast_ws({
-                            "type": "audio_meter",
-                            "level": min(1.0, level * 20.0),
-                            "speaking": has_spoken,
-                        }),
+                        broadcast_ws(payload),
                         loop,
                     )
 

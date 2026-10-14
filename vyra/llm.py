@@ -143,16 +143,37 @@ class OpenAICompatAdapter:
             kwargs["tools"] = self._tools(tools)
         if self.reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort
-        resp = self.client.chat.completions.create(**kwargs)
-        msg = resp.choices[0].message
-        out = LLMResponse(text=msg.content or None)
-        for tc in (msg.tool_calls or []):
+
+        models_to_try = [self.model]
+        if self.provider == "google":
+            fallbacks = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]
+            for fb in fallbacks:
+                if fb not in models_to_try:
+                    models_to_try.append(fb)
+
+        last_exc = None
+        for attempt_model in models_to_try:
+            kwargs["model"] = attempt_model
             try:
-                args = json.loads(tc.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            tc_dict = {"id": tc.id, "name": tc.function.name, "args": args}
-            if hasattr(tc, "extra_content") and tc.extra_content:
-                tc_dict["extra_content"] = tc.extra_content
-            out.tool_calls.append(tc_dict)
-        return out
+                resp = self.client.chat.completions.create(**kwargs)
+                msg = resp.choices[0].message
+                out = LLMResponse(text=msg.content or None)
+                for tc in (msg.tool_calls or []):
+                    try:
+                        args = json.loads(tc.function.arguments or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                    tc_dict = {"id": tc.id, "name": tc.function.name, "args": args}
+                    if hasattr(tc, "extra_content") and tc.extra_content:
+                        tc_dict["extra_content"] = tc.extra_content
+                    out.tool_calls.append(tc_dict)
+                return out
+            except Exception as exc:
+                last_exc = exc
+                err_str = str(exc).lower()
+                # If overloaded, rate limited, model not found, or temporary server error, try fallback model
+                if any(k in err_str for k in ("503", "429", "overloaded", "quota", "rate limit", "temporarily unavailable", "not found", "404")):
+                    continue
+                raise
+        if last_exc:
+            raise last_exc

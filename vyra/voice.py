@@ -22,16 +22,35 @@ import sounddevice as sd
 
 SAMPLE_RATE = 16000
 BLOCK = 800                   # 0.05s (50ms) audio blocks
-DEFAULT_START_RMS = 0.007     # Speech start detection threshold
-DEFAULT_SILENCE_RMS = 0.004   # Trailing silence threshold
+DEFAULT_START_RMS = 0.006     # Speech start detection threshold
+DEFAULT_SILENCE_RMS = 0.0035  # Trailing silence threshold
 DEFAULT_INITIAL_TIMEOUT = 10.0 # Allow up to 10s for speaker to begin talking
-DEFAULT_TRAIL_SILENCE = 1.6   # 1600ms trailing silence allows natural Indian pauses and mid-sentence thinking
-DEFAULT_MAX_SECONDS = 35.0    # Utterance hard limit
-PRE_BUFFER_BLOCKS = 10        # 500ms pre-speech audio buffer so onset words are not clipped
+DEFAULT_TRAIL_SILENCE = 1.25   # 1250ms trailing silence allows natural Indian pauses
+DEFAULT_MAX_SECONDS = 40.0    # Utterance hard limit
+PRE_BUFFER_BLOCKS = 14        # 700ms pre-speech audio buffer so onset words are never clipped
 
 
 def _rms(block: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.square(block))) + 1e-9)
+
+
+def compute_spectrum(block: np.ndarray, num_bins: int = 32) -> list[float]:
+    """Compute normalized frequency spectrum bins from audio chunk using real FFT."""
+    try:
+        fft = np.abs(np.fft.rfft(block))
+        if len(fft) < num_bins:
+            return [0.0] * num_bins
+        chunk_size = len(fft) // num_bins
+        bins = []
+        for i in range(num_bins):
+            start = i * chunk_size
+            end = min(len(fft), (i + 1) * chunk_size)
+            val = float(np.mean(fft[start:end])) if end > start else 0.0
+            norm_val = min(1.0, max(0.0, val * 3.5))
+            bins.append(round(norm_val, 3))
+        return bins
+    except Exception:
+        return [0.0] * num_bins
 
 
 def record_until_silence(
@@ -64,17 +83,20 @@ def record_until_silence(
             block = block.reshape(-1)
             level = _rms(block)
 
-            # Sample first 4 blocks to calibrate ambient noise floor if user is quiet
-            if len(ambient_samples) < 4:
+            # Sample first 8 blocks to calibrate ambient noise floor accurately
+            if len(ambient_samples) < 8:
                 ambient_samples.append(level)
-                if len(ambient_samples) == 4:
+                if len(ambient_samples) == 8:
                     floor = float(np.median(ambient_samples))
-                    if floor < 0.008:
-                        start_rms = max(DEFAULT_START_RMS, floor * 3.0)
-                        silence_rms = max(DEFAULT_SILENCE_RMS, floor * 1.8)
+                    if floor < 0.01:
+                        start_rms = max(DEFAULT_START_RMS, floor * 2.8)
+                        silence_rms = max(DEFAULT_SILENCE_RMS, floor * 1.6)
 
             if level_callback:
                 try:
+                    spec = compute_spectrum(block, 32) if (level > 0.002 or has_spoken) else None
+                    level_callback(level, has_spoken, spec)
+                except TypeError:
                     level_callback(level, has_spoken)
                 except Exception:
                     pass
@@ -154,7 +176,14 @@ def normalize_indian_phonetics(text: str) -> str:
     # Antigravity IDE
     text = re.sub(r'\b(?:anti\s*gravity|anti-gravity|antigraviti)\b', 'Antigravity', text, flags=re.IGNORECASE)
     # Rusty name (common speech-to-text mis-hears)
-    text = re.sub(r'\b(?:rusti|rusdy|rasty|rustie|rusty\'s)\b', 'Rusty', text, flags=re.IGNORECASE)
+    text = re.sub(r'\b(?:rusti|rusdy|rasty|rustie|trusty|dusty|rusty\'s)\b', 'Rusty', text, flags=re.IGNORECASE)
+    # Claude / Claude Code misrecognitions
+    text = re.sub(r'\b(?:claud|claud code|cloud code)\b', 'Claude Code', text, flags=re.IGNORECASE)
+    # WhatsApp / Telegram
+    text = re.sub(r'\b(?:whats\s*app|what\s*app)\b', 'WhatsApp', text, flags=re.IGNORECASE)
+    text = re.sub(r'\b(?:tele\s*gram)\b', 'Telegram', text, flags=re.IGNORECASE)
+    # Common system actions
+    text = re.sub(r'\b(?:screanshot|screen\s*shot)\b', 'screenshot', text, flags=re.IGNORECASE)
     return text.strip()
 
 
@@ -219,8 +248,8 @@ class Ears:
         segments, _ = self.model.transcribe(
             audio,
             language=None,
-            beam_size=1,
-            initial_prompt="Jay, Jayesh, FRIDAY, Friday, Raaga, Raaga app, Antigravity, YouTube, Brave, music, volume, songs, battery, clipboard, buddy, Jarvis. Indian English and Hindi/Hinglish.",
+            beam_size=2,
+            initial_prompt="Jay, Jayesh, Rusty, Rusty's, Friday, Raaga, Raaga app, Antigravity, YouTube, Brave, WhatsApp, Telegram, music, volume, songs, battery, clipboard, buddy, Jarvis. Indian English, Hindi, and Hinglish.",
             condition_on_previous_text=False,
         )
         raw_text = " ".join(s.text for s in segments).strip()

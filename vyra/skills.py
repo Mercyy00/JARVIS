@@ -583,15 +583,22 @@ def see_screen(memory, question: str = "") -> str:
     if not cfg or not cfg.get("api_key"):
         return "Screen vision requires a valid LLM API key configured in .env or config.json."
 
+    screenshot = None
     try:
         from PIL import ImageGrab, Image
-    except ImportError:
-        return "Pillow library is not installed for screen capture."
-
-    try:
         screenshot = ImageGrab.grab()
-    except Exception as exc:
-        return f"Could not capture screen ({exc}). Note: Screen grab requires an interactive Windows desktop session."
+    except Exception:
+        pass
+
+    if screenshot is None:
+        try:
+            import mss
+            from PIL import Image
+            with mss.MSS() as s:
+                shot = s.grab(s.monitors[1] if len(s.monitors) > 1 else s.monitors[0])
+                screenshot = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+        except Exception as exc:
+            return f"Could not capture screen ({exc}). Note: Screen grab requires an interactive Windows desktop session."
 
     try:
         max_dim = 1280
@@ -609,28 +616,43 @@ def see_screen(memory, question: str = "") -> str:
 
         from openai import OpenAI
         base_url = cfg.get("base_url") or "https://generativelanguage.googleapis.com/v1beta/openai/"
-        client = OpenAI(api_key=cfg["api_key"], base_url=base_url)
+        client = OpenAI(api_key=cfg["api_key"], base_url=base_url, timeout=35.0)
 
-        resp = client.chat.completions.create(
-            model=cfg.get("model", "gemini-flash-lite-latest"),
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
+        models_to_try = [cfg.get("model", "gemini-flash-lite-latest")]
+        for m in ["gemini-1.5-flash", "gemini-2.0-flash"]:
+            if m not in models_to_try:
+                models_to_try.append(m)
+
+        last_exc = None
+        for vis_model in models_to_try:
+            try:
+                resp = client.chat.completions.create(
+                    model=vis_model,
+                    messages=[
                         {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{b64_img}"
-                            }
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{b64_img}"
+                                    }
+                                }
+                            ]
                         }
-                    ]
-                }
-            ],
-            max_tokens=600
-        )
-        ans = (resp.choices[0].message.content or "").strip()
-        return ans or "Analyzed screen: No significant contents detected."
+                    ],
+                    max_tokens=600
+                )
+                ans = (resp.choices[0].message.content or "").strip()
+                return ans or "Analyzed screen: No significant contents detected."
+            except Exception as e:
+                last_exc = e
+                err_s = str(e).lower()
+                if any(x in err_s for x in ("503", "429", "404", "400", "not supported", "invalid")):
+                    continue
+                break
+        return f"Error analyzing screen: {last_exc}"
     except Exception as exc:
         return f"Error analyzing screen: {exc}"
 
