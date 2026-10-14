@@ -227,6 +227,7 @@ async def handle_chat(request):
     if not msg:
         return web.json_response({"reply": ""})
 
+    mouth.stop()
     logger.info("chat in: %s", msg)
     await broadcast_ws({"type": "state", "state": "thinking"})
     try:
@@ -836,7 +837,7 @@ async def deliver_startup_greeting():
     })
     try:
         await broadcast_ws({"type": "state", "state": "speaking"})
-        mouth.speak(greeting)
+        await asyncio.to_thread(mouth.speak, greeting)
         await broadcast_ws({"type": "state", "state": "idle"})
     except Exception as exc:
         print(f"[STARTUP GREETING NOTICE] {exc}")

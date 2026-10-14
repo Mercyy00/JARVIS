@@ -58,6 +58,16 @@ def _md_inline(s):
     return s.strip()
 
 
+def _clean_filename(name: str, default: str = "document", max_len: int = 80) -> str:
+    r"""Strip illegal Windows filename characters (\ / : * ? " < > |) and sanitize."""
+    s = str(name or "").strip()
+    s = re.sub(r'[\\/*?:"<>|]', "", s)
+    s = re.sub(r"\s+", " ", s).strip(". ")
+    if not s:
+        s = default
+    return s[:max_len].strip(". ") or default
+
+
 # __REST__
 
 
@@ -88,7 +98,8 @@ def create_word(memory, title: str = "", content: str = "", filename: str = "", 
             doc.add_paragraph(_md_inline(st[2:].strip()), style="List Bullet")
         else:
             doc.add_paragraph(_md_inline(line))
-    fn = (filename or title or "document").strip() or "document"
+    raw_fn = (filename or title or "document").strip() or "document"
+    fn = _clean_filename(raw_fn, "document")
     if not fn.lower().endswith(".docx"):
         fn += ".docx"
     path = os.path.join(_out_dir("documents"), fn)
@@ -112,7 +123,8 @@ def create_pdf(memory, title: str = "", content: str = "", filename: str = "", t
         content = _doc_from_llm(topic, title) or content
     elif not (content and content.strip()):
         content = _doc_from_llm(title, title) or content
-    fn = (filename or title or "document").strip() or "document"
+    raw_fn = (filename or title or "document").strip() or "document"
+    fn = _clean_filename(raw_fn, "document")
     if not fn.lower().endswith(".pdf"):
         fn += ".pdf"
     path = os.path.join(_out_dir("documents"), fn)
@@ -188,7 +200,8 @@ def create_ppt(memory, topic: str = "", content: str = "", filename: str = "", t
     if deck is None:
         deck = {"title": topic or "Presentation", "subtitle": "",
                 "slides": [{"title": topic or "Overview", "bullets": ["(content unavailable)"]}]}
-    fn = (filename or deck.get("title") or topic or "presentation").strip() or "presentation"
+    raw_fn = (filename or deck.get("title") or topic or "presentation").strip() or "presentation"
+    fn = _clean_filename(raw_fn, "presentation")
     if not fn.lower().endswith(".pptx"):
         fn += ".pptx"
     path = os.path.join(_out_dir("presentations"), fn)
@@ -218,7 +231,8 @@ def create_excel(memory, title: str = "", content: str = "", filename: str = "")
     for col in ws.columns:
         w = max((len(str(x.value)) for x in col if x.value is not None), default=10)
         ws.column_dimensions[col[0].column_letter].width = min(w + 2, 50)
-    fn = (filename or title or "sheet").strip() or "sheet"
+    raw_fn = (filename or title or "sheet").strip() or "sheet"
+    fn = _clean_filename(raw_fn, "sheet")
     if not fn.lower().endswith(".xlsx"):
         fn += ".xlsx"
     path = os.path.join(_out_dir("sheets"), fn)

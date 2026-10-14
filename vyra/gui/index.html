@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
-<title>JARVIS HUD</title>
+<title>Rusty // Tactical AI HUD</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap">
 <style>
 /* Layout: three-column command deck. Left = clock, vitals, status. Centre = voice-reactive core over the audio spectrum.
@@ -213,9 +213,9 @@ button,input{font:inherit;color:inherit}
 
 <div id="hud" data-state="boot">
   <header class="top">
-    <div class="brand">J.A.R.V.I.S.<small>TACTICAL INTERFACE</small></div>
+    <div class="brand">RUSTY<small>TACTICAL INTERFACE</small></div>
     <div class="ticker" aria-hidden="true"><span id="ticker"></span></div>
-    <div class="ver"><b></b>MK VII &middot; HUD v7.3.1 &middot; BUILD 20261011</div>
+    <div class="ver"><b></b>AI CORE &middot; HUD v7.3.1 &middot; SYSTEM ONLINE</div>
   </header>
 
   <main class="stage">
@@ -797,7 +797,7 @@ $('#ticker').textContent = Array(2).fill('ARC REACTOR OUTPUT NOMINAL  //  HOLOGR
 
 /* ---------- boot ---------- */
 const BOOT = [
-  [250, 'Initialising J.A.R.V.I.S. kernel.'],
+  [250, 'Initialising RUSTY neural kernel.'],
   [800, 'Arc reactor link established.'],
   [1300, 'Calibrating holographic projectors.'],
   [1800, 'Sensor suite online: radar, audio, telemetry.'],
@@ -808,7 +808,7 @@ BOOT.forEach(([ms, t]) => setTimeout(() => log(t, 'sys'), ms));
 setTimeout(() => {
   const h = new Date().getHours(), g = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
   setState('idle'); log('Neural core synchronised. All systems nominal.', 'sys');
-  say(`${g}, sir. All systems are online.`, {after:'idle'});
+  say(`${g}, Sir. All systems are online.`, {after:'idle'});
   $('#boot').classList.add('done');
 }, 2900);
 

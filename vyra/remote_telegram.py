@@ -44,9 +44,20 @@ class TelegramBridge:
         with urllib.request.urlopen(url, timeout=35) as r:
             return json.loads(r.read().decode("utf-8", "replace"))
 
+    def _call_post(self, method: str, **params):
+        url = f"{self.base}/{method}"
+        data = urllib.parse.urlencode(params).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=35) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+
     def send(self, chat_id, text: str):
         try:
-            self._call("sendMessage", chat_id=chat_id, text=text)
+            if not text:
+                text = "..."
+            for i in range(0, len(text), 4000):
+                chunk = text[i:i+4000]
+                self._call_post("sendMessage", chat_id=chat_id, text=chunk)
         except Exception:
             pass
 
@@ -74,11 +85,27 @@ class TelegramBridge:
                 if not chat or not text:
                     continue
                 if not self.allowed:
-                    self.allowed = chat
-                    self._persist_chat_id(chat)
-                    self.send(chat, "Rusty linked to this chat, Sir. Send me a command anytime.")
-                    if text.lower() in ("/start", "start"):
+                    try:
+                        cfg_pin = str(json.loads(CONFIG_PATH.read_text("utf-8")).get("remote", {}).get("pin", "") or "")
+                    except Exception:
+                        cfg_pin = ""
+                    parts = text.split()
+                    is_authed = False
+                    if cfg_pin:
+                        if (parts[0].lower() in ("/link", "/auth", "/pin") and len(parts) > 1 and parts[1] == cfg_pin) or text == cfg_pin:
+                            is_authed = True
+                    else:
+                        is_authed = True
+
+                    if is_authed:
+                        self.allowed = chat
+                        self._persist_chat_id(chat)
+                        self.send(chat, "Rusty linked to this chat, Sir. Send me a command anytime.")
                         continue
+                    else:
+                        self.send(chat, "Locked. To link this Telegram account with Rusty, send: /link <your_pin>")
+                        continue
+
                 if chat != self.allowed:
                     self.send(chat, "Not authorized.")
                     continue

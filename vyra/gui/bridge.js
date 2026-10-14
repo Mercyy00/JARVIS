@@ -76,22 +76,58 @@
     });
   });
 
-  // Minimal window controls (borderless window) — minimise & close.
+  // Tactical HUD window & audio controls
   function winCall(apiName, httpPath) {
     if (window.pywebview && window.pywebview.api && window.pywebview.api[apiName]) {
       try { window.pywebview.api[apiName](); return; } catch (_) {}
     }
     fetch(withPin(httpPath), { method: 'POST' }).catch(() => {});
   }
+
+  let isPinned = true;
+  let isPip = true;
+
   const ctl = document.createElement('div');
-  ctl.style.cssText = 'position:fixed;top:7px;right:9px;z-index:99999;display:flex;gap:7px;font:12px sans-serif';
-  const mk = (label, title, fn) => {
+  ctl.className = 'tactical-window-controls';
+  ctl.style.cssText = 'position:fixed;top:8px;right:14px;z-index:99999;display:flex;gap:6px;align-items:center;';
+
+  const mk = (icon, title, fn, id) => {
     const b = document.createElement('button');
-    b.textContent = label; b.title = title;
-    b.style.cssText = 'width:22px;height:22px;border:1px solid rgba(120,180,220,.35);background:rgba(10,20,30,.5);color:#9fd4e6;border-radius:5px;cursor:pointer;line-height:1;padding:0';
-    b.onclick = fn; return b;
+    b.id = id || '';
+    b.innerHTML = icon;
+    b.title = title;
+    b.style.cssText = 'width:26px;height:24px;border:1px solid rgba(79,216,255,0.4);background:rgba(2,16,25,0.75);color:#d7f5ff;border-radius:3px;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;transition:all 0.2s;box-shadow:0 0 6px rgba(79,216,255,0.15);';
+    b.onmouseenter = () => { b.style.borderColor = 'rgba(79,216,255,0.9)'; b.style.boxShadow = '0 0 10px rgba(79,216,255,0.5)'; b.style.background = 'rgba(79,216,255,0.15)'; };
+    b.onmouseleave = () => { b.style.borderColor = 'rgba(79,216,255,0.4)'; b.style.boxShadow = '0 0 6px rgba(79,216,255,0.15)'; b.style.background = 'rgba(2,16,25,0.75)'; };
+    b.onclick = fn;
+    return b;
   };
-  ctl.appendChild(mk('—', 'Minimise', () => winCall('minimize', '/api/window/minimize')));
-  ctl.appendChild(mk('✕', 'Close', () => winCall('close', '/api/window/close')));
+
+  const muteBtn = mk('🔊', 'Toggle Voice Mute', () => {
+    muted = !muted;
+    muteBtn.innerHTML = muted ? '🔇' : '🔊';
+    muteBtn.title = muted ? 'Unmute Rusty' : 'Mute Rusty';
+    try { J.log(muted ? 'Voice synthesis muted.' : 'Voice synthesis active.', 'sys'); } catch (_) {}
+  }, 'hudMuteBtn');
+
+  const pinBtn = mk('📌', 'Pin to Top (Always on Top)', () => {
+    isPinned = !isPinned;
+    pinBtn.style.opacity = isPinned ? '1' : '0.5';
+    winCall('toggle_pin', '/api/window/pin');
+  }, 'hudPinBtn');
+
+  const modeBtn = mk('⛶', 'Toggle Window Layout (PiP / Full)', () => {
+    isPip = !isPip;
+    winCall('toggle_mode', '/api/window/mode');
+  }, 'hudModeBtn');
+
+  const minBtn = mk('—', 'Minimise', () => winCall('minimize', '/api/window/minimize'), 'hudMinBtn');
+  const closeBtn = mk('✕', 'Close', () => winCall('close', '/api/window/close'), 'hudCloseBtn');
+
+  ctl.appendChild(muteBtn);
+  ctl.appendChild(pinBtn);
+  ctl.appendChild(modeBtn);
+  ctl.appendChild(minBtn);
+  ctl.appendChild(closeBtn);
   document.body.appendChild(ctl);
 })();

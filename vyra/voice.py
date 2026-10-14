@@ -368,6 +368,20 @@ class Mouth:
             except Exception:
                 pass
 
+    def _run_async(self, coro):
+        """Safely execute an async coroutine even if an event loop is running on the current thread."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, coro).result()
+        else:
+            return asyncio.run(coro)
+
     def _speak_edge(self, text: str, voice: str):
         base = _parse_rate(self.rate)
         # Stream long replies sentence-by-sentence so the first words start quickly.
@@ -379,7 +393,7 @@ class Mouth:
             ts = int(time.time() * 1000)
             path = Path(tempfile.gettempdir()) / f"voice_{os.getpid()}_{ts}.mp3"
             try:
-                asyncio.run(self._synth(chunk, path, voice, rate, pitch))
+                self._run_async(self._synth(chunk, path, voice, rate, pitch))
                 if self._interrupt.is_set():
                     break
                 self._play(path)
