@@ -217,6 +217,28 @@ async def proactive_watcher():
         await asyncio.sleep(60)
 
 
+def make_progress_notifier(loop=None, mute: bool = False):
+    """Factory to create a real-time progress callback that broadcasts to HUD and narrates speech."""
+    active_loop = loop or server_loop
+    def on_progress(message: str, speak: bool = True):
+        if not message:
+            return
+        logger.info("progress notification: %s (speak=%s)", message, speak)
+        target_loop = active_loop or server_loop
+        if target_loop and target_loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                broadcast_ws({"type": "progress", "message": message, "speak": speak}),
+                target_loop
+            )
+            asyncio.run_coroutine_threadsafe(
+                broadcast_ws({"type": "log", "level": "vyra", "message": f"⚡ {message}"}),
+                target_loop
+            )
+        if speak and not mute and not is_muted_global:
+            threading.Thread(target=lambda: mouth.speak(message), daemon=True).start()
+    return on_progress
+
+
 async def handle_chat(request):
     global is_muted_global
     data = await request.json()
@@ -230,10 +252,12 @@ async def handle_chat(request):
     mouth.stop()
     logger.info("chat in: %s", msg)
     await broadcast_ws({"type": "state", "state": "thinking"})
+    loop = asyncio.get_running_loop()
+    notifier = make_progress_notifier(loop, mute=mute)
     try:
         # Run the (blocking, network-bound) brain call off the event loop so
         # telemetry + WebSocket traffic keep flowing while FRIDAY thinks.
-        reply = await asyncio.to_thread(brain.ask, msg)
+        reply = await asyncio.to_thread(brain.ask, msg, progress_callback=notifier)
     except Exception as exc:
         logger.exception("brain error (chat)")
         reply = f"Error during neural processing: {exc}"
@@ -368,8 +392,9 @@ async def run_conversational_followup_loop(loop, mute: bool = False):
             break
 
         await broadcast_ws({"type": "log", "level": "user", "message": follow_text})
+        notifier = make_progress_notifier(loop, mute=mute)
         try:
-            reply = await asyncio.to_thread(brain.ask, follow_text)
+            reply = await asyncio.to_thread(brain.ask, follow_text, progress_callback=notifier)
         except Exception as exc:
             logger.exception("brain error (followup)")
             reply = f"Error during neural processing: {exc}"
@@ -456,8 +481,9 @@ async def handle_voice_listen(request):
     logger.info("voice heard: %s", heard)
 
     # Brain ask
+    notifier = make_progress_notifier(loop, mute=mute)
     try:
-        reply = await asyncio.to_thread(brain.ask, processed_heard)
+        reply = await asyncio.to_thread(brain.ask, processed_heard, progress_callback=notifier)
     except Exception as exc:
         logger.exception("brain error (voice listen)")
         reply = f"Error during neural processing: {exc}"
@@ -502,8 +528,9 @@ async def process_wake_event(phrase: str, cmd: str):
             # Directive was spoken in the same sentence (e.g. "Hey buddy open Brave browser")
             await broadcast_ws({"type": "log", "level": "user", "message": cmd})
             await broadcast_ws({"type": "state", "state": "thinking"})
+            notifier = make_progress_notifier(loop, mute=is_muted_global)
             try:
-                reply = await asyncio.to_thread(brain.ask, cmd)
+                reply = await asyncio.to_thread(brain.ask, cmd, progress_callback=notifier)
             except Exception as exc:
                 logger.exception("brain error (wake cmd)")
                 reply = f"Error during neural processing: {exc}"
@@ -576,8 +603,9 @@ async def process_wake_event(phrase: str, cmd: str):
                 return
 
             await broadcast_ws({"type": "log", "level": "user", "message": follow_cmd})
+            notifier = make_progress_notifier(loop, mute=is_muted_global)
             try:
-                reply = await asyncio.to_thread(brain.ask, follow_cmd)
+                reply = await asyncio.to_thread(brain.ask, follow_cmd, progress_callback=notifier)
             except Exception as exc:
                 logger.exception("brain error (wake followup)")
                 reply = f"Error during neural processing: {exc}"

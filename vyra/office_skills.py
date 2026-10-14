@@ -71,15 +71,21 @@ def _clean_filename(name: str, default: str = "document", max_len: int = 80) -> 
 # __REST__
 
 
-def create_word(memory, title: str = "", content: str = "", filename: str = "", topic: str = "") -> str:
+def create_word(memory, title: str = "", content: str = "", filename: str = "", topic: str = "", progress_callback=None) -> str:
     try:
         from docx import Document
     except Exception:
         return "python-docx isn't installed, Sir."
     if topic and topic.strip():
-        content = _doc_from_llm(topic, title) or content
+        if progress_callback:
+            progress_callback(f"Researching and drafting Word document on '{title or topic}', Sir...", speak=True)
+        content = _doc_from_llm(topic, title, progress_callback=progress_callback) or content
     elif not (content and content.strip()):
-        content = _doc_from_llm(title, title) or content
+        if progress_callback:
+            progress_callback(f"Generating Word document content for '{title}', Sir...", speak=True)
+        content = _doc_from_llm(title, title, progress_callback=progress_callback) or content
+    if progress_callback:
+        progress_callback("Formatting document paragraphs and compiling .docx file...", speak=False)
     doc = Document()
     if title:
         doc.add_heading(_md_inline(title), level=0)
@@ -105,10 +111,12 @@ def create_word(memory, title: str = "", content: str = "", filename: str = "", 
     path = os.path.join(_out_dir("documents"), fn)
     doc.save(path)
     _open(path)
+    if progress_callback:
+        progress_callback(f"Word document '{fn}' created and opened on desktop.", speak=False)
     return f"Created the Word document '{fn}' and opened it, Sir."
 
 
-def create_pdf(memory, title: str = "", content: str = "", filename: str = "", topic: str = "") -> str:
+def create_pdf(memory, title: str = "", content: str = "", filename: str = "", topic: str = "", progress_callback=None) -> str:
     """Create a real PDF (not a Word doc). Pass a `topic` for a full, comprehensive
     document (written internally), or pre-written `content`. Use whenever Jay asks for a PDF."""
     try:
@@ -120,9 +128,15 @@ def create_pdf(memory, title: str = "", content: str = "", filename: str = "", t
     except Exception:
         return "reportlab isn't installed, Sir."
     if topic and topic.strip():
-        content = _doc_from_llm(topic, title) or content
+        if progress_callback:
+            progress_callback(f"Researching and drafting comprehensive sections for '{title or topic}', Sir...", speak=True)
+        content = _doc_from_llm(topic, title, progress_callback=progress_callback) or content
     elif not (content and content.strip()):
-        content = _doc_from_llm(title, title) or content
+        if progress_callback:
+            progress_callback(f"Generating PDF content for '{title}', Sir...", speak=True)
+        content = _doc_from_llm(title, title, progress_callback=progress_callback) or content
+    if progress_callback:
+        progress_callback("Styling typography and compiling the PDF layout...", speak=False)
     raw_fn = (filename or title or "document").strip() or "document"
     fn = _clean_filename(raw_fn, "document")
     if not fn.lower().endswith(".pdf"):
@@ -161,6 +175,8 @@ def create_pdf(memory, title: str = "", content: str = "", filename: str = "", t
     SimpleDocTemplate(path, pagesize=A4, topMargin=22 * mm, bottomMargin=18 * mm,
                       leftMargin=20 * mm, rightMargin=20 * mm, title=(title or fn)).build(story)
     _open(path)
+    if progress_callback:
+        progress_callback(f"PDF document '{fn}' generated and opened, Sir.", speak=False)
     return f"Created the PDF '{fn}' and opened it, Sir."
 
 
@@ -186,7 +202,7 @@ def _parse_deck_text(title, content):
     return {"title": title or slides[0]["title"], "subtitle": "", "slides": slides}
 
 
-def create_ppt(memory, topic: str = "", content: str = "", filename: str = "", theme: str = "midnight") -> str:
+def create_ppt(memory, topic: str = "", content: str = "", filename: str = "", theme: str = "midnight", progress_callback=None) -> str:
     """Create a polished PowerPoint. Pass a short `topic`/brief and Rusty writes a
     full, well-designed deck (themed). Optionally pass pre-written `content`
     ('# Title' + '- bullet' blocks). theme: midnight | slate | royal | clean."""
@@ -196,10 +212,14 @@ def create_ppt(memory, topic: str = "", content: str = "", filename: str = "", t
         return "python-pptx isn't installed, Sir."
     deck = _parse_deck_text(topic, content) if (content and content.strip()) else None
     if deck is None:
-        deck = _deck_from_llm(topic or content or "a presentation")
+        if progress_callback:
+            progress_callback(f"Structuring and designing presentation slides for '{topic}', Sir...", speak=True)
+        deck = _deck_from_llm(topic or content or "a presentation", progress_callback=progress_callback)
     if deck is None:
         deck = {"title": topic or "Presentation", "subtitle": "",
                 "slides": [{"title": topic or "Overview", "bullets": ["(content unavailable)"]}]}
+    if progress_callback:
+        progress_callback(f"Rendering PowerPoint slides with '{theme}' theme...", speak=False)
     raw_fn = (filename or deck.get("title") or topic or "presentation").strip() or "presentation"
     fn = _clean_filename(raw_fn, "presentation")
     if not fn.lower().endswith(".pptx"):
@@ -207,18 +227,22 @@ def create_ppt(memory, topic: str = "", content: str = "", filename: str = "", t
     path = os.path.join(_out_dir("presentations"), fn)
     n = _render_pptx(path, deck, theme)
     _open(path)
+    if progress_callback:
+        progress_callback(f"Presentation '{fn}' ({n} slides) created and opened.", speak=False)
     return f"Created a polished {n}-slide presentation '{fn}' and opened it, Sir."
 
 
 # __REST2__
 
 
-def create_excel(memory, title: str = "", content: str = "", filename: str = "") -> str:
+def create_excel(memory, title: str = "", content: str = "", filename: str = "", progress_callback=None) -> str:
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font
     except Exception:
         return "openpyxl isn't installed, Sir."
+    if progress_callback:
+        progress_callback(f"Generating spreadsheet grid and rows for '{title}', Sir...", speak=True)
     wb = Workbook()
     ws = wb.active
     ws.title = (title or "Sheet")[:31]
@@ -238,12 +262,17 @@ def create_excel(memory, title: str = "", content: str = "", filename: str = "")
     path = os.path.join(_out_dir("sheets"), fn)
     wb.save(path)
     _open(path)
+    if progress_callback:
+        progress_callback(f"Excel sheet '{fn}' created and opened.", speak=False)
     return f"Created the Excel sheet '{fn}' and opened it, Sir."
 
 
-def create_project(memory, name: str = "project", files=None) -> str:
+def create_project(memory, name: str = "project", files=None, progress_callback=None) -> str:
     if not isinstance(files, dict) or not files:
         return "Give me the files to create, Sir — a name-to-content map."
+    count = len(files)
+    if progress_callback:
+        progress_callback(f"Scaffolding {count} project file(s) for '{name}', Sir...", speak=True)
     safe = re.sub(r"[^\w\-]", "_", name or "project") or "project"
     base = os.path.join(_out_dir("projects"), safe)
     os.makedirs(base, exist_ok=True)
@@ -274,10 +303,12 @@ def create_project(memory, name: str = "project", files=None) -> str:
     if target:
         _open(target)
         opened = " Opened the preview."
+    if progress_callback:
+        progress_callback(f"Project '{name}' with {len(written)} files ready at {base}.", speak=False)
     return f"Built '{name}' with {len(written)} file(s) at {base}, Sir.{opened}"
 
 
-def create_website(memory, name: str = "site", description: str = "") -> str:
+def create_website(memory, name: str = "site", description: str = "", progress_callback=None) -> str:
     """Generate a complete single-file website and open it. The model writes the
     HTML directly here (reliable) rather than squeezing it into a tool argument."""
     try:
@@ -288,6 +319,8 @@ def create_website(memory, name: str = "site", description: str = "") -> str:
         return "I couldn't reach my brain to build that, Sir."
     if not cfg.get("api_key"):
         return "No API key configured, Sir."
+    if progress_callback:
+        progress_callback(f"Architecting responsive layout and styles for website '{name}', Sir...", speak=True)
     llm = dict(cfg)
     llm["model"] = cfg.get("content_model") or cfg.get("deep_model") or cfg.get("model")
     llm["max_tokens"] = 8000
@@ -296,6 +329,8 @@ def create_website(memory, name: str = "site", description: str = "") -> str:
         sysmsg = ("You are an elite web designer and developer. Output ONLY a complete, "
                   "self-contained index.html with inline CSS and JS — responsive, accessible, "
                   "modern and polished. No markdown code fences, no commentary — just the HTML.")
+        if progress_callback:
+            progress_callback("Writing semantic HTML5, modern CSS rules and interactive JavaScript...", speak=False)
         resp = client.complete(sysmsg, [{"role": "user", "content": f"Build this website: {description or name}"}], [])
         html = (resp.text or "").strip()
         html = re.sub(r"^```[a-zA-Z]*\s*", "", html)
@@ -311,13 +346,17 @@ def create_website(memory, name: str = "site", description: str = "") -> str:
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(html)
     _open(path)
+    if progress_callback:
+        progress_callback(f"Website '{name}' compiled and launched in browser preview, Sir.", speak=False)
     return f"Built your website '{name}' and opened it, Sir — a polished single-page site."
 
 
-def ask_claude_code(memory, task: str = "", folder: str = "") -> str:
+def ask_claude_code(memory, task: str = "", folder: str = "", progress_callback=None) -> str:
     cwd = os.path.abspath(os.path.expandvars(folder)) if folder else ROOT
     if not os.path.isdir(cwd):
         cwd = ROOT
+    if progress_callback:
+        progress_callback("Delegating engineering task to Claude Code engine, Sir...", speak=True)
     try:
         res = subprocess.run(["claude", "-p", task, "--permission-mode", "acceptEdits"],
                              capture_output=True, text=True, timeout=300, cwd=cwd)
@@ -343,7 +382,7 @@ _PPTX_THEMES = {
 }
 
 
-def _deck_from_llm(topic, n=7):
+def _deck_from_llm(topic, n=7, progress_callback=None):
     try:
         import json as _json
         from .config import load_config
@@ -359,6 +398,8 @@ def _deck_from_llm(topic, n=7):
                   '{"title": str, "subtitle": str, "slides": [{"title": str, "bullets": [str, ...]}]}. '
                   f"Write EXACTLY {n} content slides (plus the title), each with 3-5 substantive, "
                   "insightful bullets. Concise, specific, no fluff. No markdown, no code fences — JSON only.")
+        if progress_callback:
+            progress_callback(f"Synthesizing {n} presentation slides and structure...", speak=False)
         resp = client.complete(sysmsg, [{"role": "user", "content": f"Create a presentation about: {topic}"}], [])
         txt = (resp.text or "").strip()
         txt = re.sub(r"^```[a-zA-Z]*\s*", "", txt)
@@ -375,7 +416,7 @@ def _deck_from_llm(topic, n=7):
 # __RENDER__
 
 
-def _doc_from_llm(topic, title=""):
+def _doc_from_llm(topic, title="", progress_callback=None):
     """Generate a long, comprehensive document body from a topic/brief."""
     try:
         from .config import load_config
@@ -394,6 +435,8 @@ def _doc_from_llm(topic, title=""):
                   "section headings and '- ' for bullets. Plain text only — NO markdown emphasis (**, *, backticks). "
                   "Do not stop early; be exhaustive.")
         user = f"Write the full document titled '{title or topic}'. Topic / brief: {topic}"
+        if progress_callback:
+            progress_callback("Synthesizing in-depth document text with AI engine...", speak=False)
         resp = client.complete(sysmsg, [{"role": "user", "content": user}], [])
         return (resp.text or "").strip()
     except Exception:
@@ -473,7 +516,7 @@ def _render_pptx(path, deck, theme_name="midnight"):
     return len(slides)
 
 
-def export_note_to_pdf(memory, query: str = "", filename: str = "") -> str:
+def export_note_to_pdf(memory, query: str = "", filename: str = "", progress_callback=None) -> str:
     """Export a saved note or note collection from memory into a clean, formatted PDF."""
     notes = memory.list_notes() if hasattr(memory, "list_notes") else []
     if not notes:
@@ -494,10 +537,12 @@ def export_note_to_pdf(memory, query: str = "", filename: str = "") -> str:
     title = f"Note — {ts[:10] if ts else 'Export'}"
     fn = filename or f"Note_{ts.replace(':', '-').replace('T', '_') if ts else 'Export'}"
     content = f"# {title}\n\n*Recorded on {ts}*\n\n{note_text}"
-    return create_pdf(memory, title=title, content=content, filename=fn)
+    if progress_callback:
+        progress_callback("Formatting saved note into professional PDF layout, Sir...", speak=True)
+    return create_pdf(memory, title=title, content=content, filename=fn, progress_callback=progress_callback)
 
 
-def convert_document(memory, source_path: str, target_format: str = "pdf") -> str:
+def convert_document(memory, source_path: str, target_format: str = "pdf", progress_callback=None) -> str:
     """Convert a text or markdown file into a formatted PDF or Word document."""
     raw = (source_path or "").strip().strip('"').strip("'")
     if not raw:
@@ -513,8 +558,10 @@ def convert_document(memory, source_path: str, target_format: str = "pdf") -> st
         return f"Could not read source file: {exc}"
 
     base_name = os.path.splitext(os.path.basename(full))[0]
+    if progress_callback:
+        progress_callback(f"Reading '{os.path.basename(full)}' and converting to {target_format.upper()}...", speak=True)
     if target_format == "pdf":
-        return create_pdf(memory, title=base_name, content=content, filename=base_name + ".pdf")
+        return create_pdf(memory, title=base_name, content=content, filename=base_name + ".pdf", progress_callback=progress_callback)
     elif target_format in ("docx", "word"):
-        return create_word(memory, title=base_name, content=content, filename=base_name + ".docx")
+        return create_word(memory, title=base_name, content=content, filename=base_name + ".docx", progress_callback=progress_callback)
     return f"Unsupported target format '{target_format}'. Supported formats: pdf, docx."

@@ -333,6 +333,7 @@ class Mouth:
         self.pronounce_name = pronounce_vyra
         self._pygame = pygame
         self._interrupt = threading.Event()
+        self._lock = threading.Lock()
         if not pygame.mixer.get_init():
             pygame.mixer.init()
         # Optional instant-local engine for short confirmations (off → one Edge voice).
@@ -369,16 +370,17 @@ class Mouth:
         clean_text = self._prepare_text(text)
         if not clean_text:
             return
-        self._interrupt.clear()
-        # Hindi (Devanagari) → natural Edge Hindi voice.
-        if self.voice_hindi and _has_devanagari(clean_text):
-            self._speak_edge(clean_text, self.voice_hindi)
-            return
-        # Short confirmations → instant local Piper; longer replies → natural Edge.
-        if self._piper and len(clean_text) <= 90:
-            if self._speak_piper(clean_text):
+        with self._lock:
+            self._interrupt.clear()
+            # Hindi (Devanagari) → natural Edge Hindi voice.
+            if self.voice_hindi and _has_devanagari(clean_text):
+                self._speak_edge(clean_text, self.voice_hindi)
                 return
-        self._speak_edge(clean_text, self.voice)
+            # Short confirmations → instant local Piper; longer replies → natural Edge.
+            if self._piper and len(clean_text) <= 90:
+                if self._speak_piper(clean_text):
+                    return
+            self._speak_edge(clean_text, self.voice)
 
     def _speak_piper(self, text: str) -> bool:
         ts = int(time.time() * 1000)

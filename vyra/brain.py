@@ -72,6 +72,56 @@ Current time: {datetime.now().strftime('%A, %d %B %Y, %H:%M')}
 """
 
 
+def _format_tool_status(name: str, args: dict) -> str:
+    """Produce a friendly, spoken status message when Rusty initiates a tool."""
+    args = args or {}
+    if name == "create_pdf":
+        t = args.get("title") or args.get("topic") or "document"
+        return f"Drafting and compiling PDF document '{t}', Sir..."
+    elif name == "create_word":
+        t = args.get("title") or args.get("topic") or "document"
+        return f"Drafting Word document '{t}', Sir..."
+    elif name == "create_ppt":
+        t = args.get("topic") or "presentation"
+        return f"Structuring and generating presentation deck for '{t}', Sir..."
+    elif name == "create_website":
+        t = args.get("name") or "website"
+        return f"Designing and building website '{t}', Sir..."
+    elif name == "create_project":
+        t = args.get("name") or "project"
+        return f"Scaffolding project files for '{t}', Sir..."
+    elif name == "create_excel":
+        t = args.get("title") or "spreadsheet"
+        return f"Compiling data and formatting Excel sheet '{t}', Sir..."
+    elif name == "web_answer":
+        q = args.get("query") or "information"
+        return f"Searching knowledge sources and researching '{q[:40]}', Sir..."
+    elif name == "see_screen":
+        return "Capturing screen display and analyzing visual details, Sir..."
+    elif name == "ask_claude_code":
+        return "Delegating task to Claude Code engine, Sir..."
+    elif name == "search_files":
+        q = args.get("query") or "files"
+        return f"Searching local drives for '{q}', Sir..."
+    elif name == "run_terminal_command":
+        cmd = args.get("command") or ""
+        short = (cmd[:35] + "...") if len(cmd) > 35 else cmd
+        return f"Executing terminal command '{short}', Sir..."
+    elif name == "export_note_to_pdf":
+        return "Exporting note to PDF document layout, Sir..."
+    elif name == "convert_document":
+        fmt = str(args.get("target_format") or "PDF").upper()
+        return f"Converting document to {fmt}, Sir..."
+    elif name == "play_music":
+        q = args.get("query") or ""
+        return f"Opening Raaga app to play music{' for ' + q if q else ''}, Sir..."
+    elif name == "generate_image":
+        return "Synthesizing visual artwork, Sir..."
+    elif name == "send_whatsapp_message":
+        return "Preparing WhatsApp message for dispatch, Sir..."
+    return ""
+
+
 class Brain:
     def __init__(self, config: dict, memory: Memory):
         self.config = config
@@ -113,7 +163,7 @@ class Brain:
         self.user_name = self.memory.profile.get("name") or self.config["user"]["name"]
         return build_system_prompt(self.memory, self.user_name, self.assistant_name)
 
-    def ask(self, user_text: str) -> str:
+    def ask(self, user_text: str, progress_callback=None) -> str:
         """Run one user turn through the think->act loop; return VYRA's reply."""
         if FRESH_START.search(user_text or ""):
             return self.clear_conversation()
@@ -146,7 +196,14 @@ class Brain:
                                          "tool_calls": resp.tool_calls})
                     results = []
                     for tc in resp.tool_calls:
-                        output = skills.execute(tc["name"], tc["args"], self.memory)
+                        if progress_callback:
+                            st = _format_tool_status(tc["name"], tc.get("args") or {})
+                            if st:
+                                try:
+                                    progress_callback(st, speak=True)
+                                except Exception:
+                                    pass
+                        output = skills.execute(tc["name"], tc["args"], self.memory, progress_callback=progress_callback)
                         results.append({"id": tc["id"], "name": tc["name"], "output": output})
                     self.history.append({"role": "tool", "results": results})
                     continue

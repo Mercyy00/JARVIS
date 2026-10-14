@@ -851,6 +851,13 @@ const api = {
   setSpectrum(a){ if (a && a.length){ ext.spec = a; ext.specUntil = performance.now() + 1200; } else ext.specUntil = 0; },
   setGauges(o){ if (!o) return; for (const k of Object.keys(o)){ if (k in ext.g) ext.g[k] = o[k] === null || o[k] === undefined ? null : +o[k]; } },
   log(text, kind){ log(text, kind || 'sys'); },
+  setProgress(text){
+    if (!text) return;
+    setState('thinking');
+    if (capState) capState.textContent = 'TASK IN PROGRESS';
+    setCaption(text, 14);
+    log('⚡ ' + text, 'jrv', false);
+  },
   say, wake, standby, alert:raiseAlert,
   demo(on){ demoOn = !!on; },
   onCommand:null

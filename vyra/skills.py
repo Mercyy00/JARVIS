@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import csv
 import ctypes
+import inspect
 import io
 import os
 import re
@@ -588,8 +589,10 @@ def write_clipboard(memory, text: str) -> str:
         return f"Could not copy to clipboard: {exc}"
 
 
-def see_screen(memory, question: str = "") -> str:
+def see_screen(memory, question: str = "", progress_callback=None) -> str:
     """Capture and analyze what is visible on the user's screen using AI vision."""
+    if progress_callback:
+        progress_callback("Capturing screen display and analyzing visual details, Sir...", speak=True)
     global _VISION_CONFIG
     cfg = _VISION_CONFIG
     if not cfg:
@@ -936,8 +939,10 @@ DANGEROUS_COMMANDS = [
 ]
 
 
-def run_terminal_command(memory, command: str) -> str:
+def run_terminal_command(memory, command: str, progress_callback=None) -> str:
     """Execute a PowerShell or CMD command directly on Jay's computer and return output."""
+    if progress_callback:
+        progress_callback("Executing terminal command on system, Sir...", speak=False)
     cmd_lower = command.lower().strip()
     for pat in DANGEROUS_COMMANDS:
         if re.search(pat, cmd_lower):
@@ -1098,8 +1103,10 @@ def write_file(memory, path: str, content: str) -> str:
         return f"Failed to write file: {exc}"
 
 
-def search_files(memory, query: str, folder: str = "D:\\engineers\\JAY") -> str:
+def search_files(memory, query: str, folder: str = "D:\\engineers\\JAY", progress_callback=None) -> str:
     """Search for files and directories matching query name."""
+    if progress_callback:
+        progress_callback(f"Scanning storage directories for '{query}', Sir...", speak=False)
     try:
         root_dir = _resolve_path(folder)
         if not os.path.exists(root_dir):
@@ -1178,9 +1185,11 @@ def mobile_phone_gateway(memory, action: str = "status") -> str:
     )
 
 
-def web_answer(memory, query: str) -> str:
+def web_answer(memory, query: str, progress_callback=None) -> str:
     """Look something up and answer concisely — Wikipedia for facts, with the
     model's own knowledge as backup. Use for 'what/who is', facts, definitions."""
+    if progress_callback:
+        progress_callback(f"Researching '{query[:40]}' across knowledge sources, Sir...", speak=True)
     import urllib.request
     import urllib.parse
     import json
@@ -1489,12 +1498,16 @@ SKILLS = [
 _BY_NAME = {s["name"]: s for s in SKILLS}
 
 
-def execute(name: str, args: dict, memory) -> str:
+def execute(name: str, args: dict, memory, progress_callback=None) -> str:
     skill = _BY_NAME.get(name)
     if not skill:
         return f"(unknown skill: {name})"
     try:
-        return skill["fn"](memory, **(args or {}))
+        sig = inspect.signature(skill["fn"])
+        call_args = dict(args or {})
+        if "progress_callback" in sig.parameters:
+            call_args["progress_callback"] = progress_callback
+        return skill["fn"](memory, **call_args)
     except TypeError as exc:
         return f"(bad arguments for {name}: {exc})"
     except Exception as exc:  # a skill failing must never crash VYRA

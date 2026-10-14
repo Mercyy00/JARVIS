@@ -139,6 +139,14 @@
         } else if (d.type === 'wake_detected') {
           playChime('wake');
           J.wake(); if (d.command) J.log(d.command, 'usr');
+        } else if (d.type === 'progress') {
+          if (d.message) {
+            if (J.setProgress) {
+              J.setProgress(d.message);
+            } else {
+              J.say(d.message, { after: 'thinking' });
+            }
+          }
         } else if (d.type === 'log') {
           const kind = d.level === 'user' ? 'usr' : (d.level === 'vyra' ? 'jrv' : (d.level === 'alt' ? 'alt' : 'sys'));
           J.log(d.message || d.text || '', kind);
