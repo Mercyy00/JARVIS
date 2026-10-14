@@ -23,11 +23,45 @@ def _out_dir(sub: str = "") -> str:
     return d
 
 
-def _open(path):
+def _open(path: str) -> bool:
+    """Robust multi-tier file opener for Windows desktop documents."""
+    p = str(path)
+    if not os.path.exists(p):
+        return False
     try:
-        os.startfile(path)
+        os.startfile(p)
+        return True
     except Exception:
         pass
+
+    # Fallback 1: PowerShell Start-Process
+    try:
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", f'Start-Process -FilePath "{p}"'],
+            capture_output=True, timeout=5
+        )
+        if res.returncode == 0:
+            return True
+    except Exception:
+        pass
+
+    # Fallback 2: For PDF/HTML, open with available modern browser if file association is missing/broken
+    low = p.lower()
+    if low.endswith(".pdf") or low.endswith(".html") or low.endswith(".htm"):
+        for browser in ["msedge.exe", "brave.exe", "chrome.exe"]:
+            try:
+                subprocess.Popen([browser, p])
+                return True
+            except Exception:
+                continue
+
+    # Fallback 3: CMD start
+    try:
+        subprocess.run(f'start "" "{p}"', shell=True, timeout=5)
+        return True
+    except Exception:
+        pass
+    return False
 
 
 def _num(v):
@@ -45,9 +79,33 @@ def _esc(s):
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _sanitize_typography(s: str) -> str:
+    """Normalize fancy Unicode punctuation to safe ASCII equivalents for ReportLab and Word."""
+    if not s:
+        return ""
+    replacements = {
+        "\u2014": "--",   # em-dash —
+        "\u2013": "-",    # en-dash –
+        "\u2018": "'",    # left single quote ‘
+        "\u2019": "'",    # right single quote ’
+        "\u201c": '"',    # left double quote “
+        "\u201d": '"',    # right double quote ”
+        "\u2026": "...",  # ellipsis …
+        "\u2022": "*",    # bullet •
+        "\u2192": "->",   # right arrow →
+        "\u2190": "<-",   # left arrow ←
+        "\u200b": "",     # zero-width space
+        "\u00a0": " ",    # non-breaking space
+    }
+    for k, v in replacements.items():
+        s = s.replace(k, v)
+    return s
+
+
 def _md_inline(s):
-    """Strip inline markdown markers (**, *, _, `, ~) so Word/PDF don't show them."""
+    """Strip inline markdown markers (**, *, _, `, ~) and sanitize typography."""
     s = str(s)
+    s = _sanitize_typography(s)
     s = re.sub(r"\*\*(.+?)\*\*", r"\1", s)
     s = re.sub(r"__(.+?)__", r"\1", s)
     s = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"\1", s)
@@ -56,6 +114,7 @@ def _md_inline(s):
     s = re.sub(r"~~(.+?)~~", r"\1", s)
     s = s.replace("**", "").replace("`", "")
     return s.strip()
+
 
 
 def _clean_filename(name: str, default: str = "document", max_len: int = 80) -> str:

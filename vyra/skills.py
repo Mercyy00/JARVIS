@@ -829,22 +829,155 @@ def type_text(memory, text: str) -> str:
         return f"Couldn't type text: {exc}"
 
 
+def open_file(memory, path: str) -> str:
+    """Open a file on Jay's computer with its default application or browser.
+    Accepts full paths, relative paths, or names of files created under Desktop/Rusty."""
+    if not path or not path.strip():
+        return "Please specify which file you would like me to open, Sir."
+    raw = path.strip().strip('"').strip("'")
+    full = _resolve_path(raw)
+
+    # If not found directly, search Desktop/Rusty subdirectories (documents, presentations, sheets, projects)
+    if not os.path.exists(full):
+        rusty_base = os.path.join(os.path.expandvars(r"%USERPROFILE%\Desktop"), "Rusty")
+        if os.path.exists(rusty_base):
+            target_name = os.path.basename(raw).lower()
+            for root, _, files in os.walk(rusty_base):
+                for f in files:
+                    if f.lower() == target_name or f.lower().startswith(target_name):
+                        full = os.path.join(root, f)
+                        break
+                if os.path.exists(full):
+                    break
+
+    if not os.path.exists(full):
+        return f"I couldn't locate '{path}' on your system, Sir."
+
+    if not is_path_safe(full):
+        return f"Access denied: '{os.path.basename(full)}' is protected for security, Sir."
+
+    from .office_skills import _open
+    opened = _open(full)
+    if opened:
+        return f"Opened '{os.path.basename(full)}' for you, Sir."
+    return f"Located '{os.path.basename(full)}', but could not launch a viewer on Windows."
+
+
+def switch_mode(memory, mode: str) -> str:
+    """Switch Rusty's operational mode between 'tactical', 'engineer', and 'ghost'.
+    Tactical: Military/Stark brevity, fast assistance, spoken replies.
+    Engineer: Senior Software Architect, deep reasoning, code generation, terminal/git mastery.
+    Ghost: Silent stealth focus mode, muted voice narration, pure HUD visual streaming."""
+    clean = str(mode or "").strip().lower()
+    if clean in ("stealth", "silent"):
+        clean = "ghost"
+    if clean not in ("tactical", "engineer", "ghost"):
+        return f"Unknown mode '{mode}'. Available modes are: tactical, engineer, ghost."
+
+    try:
+        from .config import load_config, save_config
+        cfg = load_config()
+        if "assistant" not in cfg:
+            cfg["assistant"] = {}
+        cfg["assistant"]["mode"] = clean
+        save_config(cfg)
+    except Exception:
+        pass
+
+    try:
+        from . import gui_server
+        gui_server.set_active_mode(clean)
+    except Exception:
+        pass
+
+    if clean == "tactical":
+        return "Tactical mode engaged, Sir. Fast, high-readiness operational protocol active."
+    elif clean == "engineer":
+        return "Engineer mode engaged, Sir. Neural parameters tuned for systems architecture, code mastery, and deep technical reasoning."
+    else:
+        return "Ghost mode engaged, Sir. Voice audio muted — operating in silent stealth focus."
+
+
 def read_file(memory, path: str, max_chars: int = 4000) -> str:
-    """Read a text file so FRIDAY can look at and discuss it."""
+    """Read a text, PDF, Word, or presentation file so Rusty can inspect and discuss it."""
     full = _resolve_path(path)
+
+    # If not found directly, check Desktop/Rusty
+    if not os.path.exists(full):
+        rusty_base = os.path.join(os.path.expandvars(r"%USERPROFILE%\Desktop"), "Rusty")
+        if os.path.exists(rusty_base):
+            target_name = os.path.basename(path).lower()
+            for root, _, files in os.walk(rusty_base):
+                for f in files:
+                    if f.lower() == target_name or f.lower().startswith(target_name):
+                        full = os.path.join(root, f)
+                        break
+                if os.path.exists(full):
+                    break
+
     if not is_path_safe(full):
         return f"Access denied: '{os.path.basename(full)}' is protected for system security, Sir."
     if not os.path.exists(full):
         return f"There's no file at {full}."
     if os.path.isdir(full):
         return f"'{full}' is a folder — use list_folder for that."
-    try:
-        with open(full, "r", encoding="utf-8", errors="replace") as fh:
-            data = fh.read(max_chars + 1)
-    except Exception as exc:
-        return f"Couldn't read it: {exc}"
+
+    low = full.lower()
+    # 1. PDF handling via pypdf
+    if low.endswith(".pdf"):
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(full)
+            text_parts = []
+            for idx, page in enumerate(reader.pages):
+                txt = page.extract_text() or ""
+                if txt.strip():
+                    text_parts.append(f"--- Page {idx + 1} ---\n{txt.strip()}")
+                if sum(len(p) for p in text_parts) > max_chars:
+                    break
+            data = "\n\n".join(text_parts)
+            if not data:
+                return f"Contents of {os.path.basename(full)}: (empty or scanned image PDF without extractable text)"
+        except Exception as exc:
+            return f"Error reading PDF '{os.path.basename(full)}': {exc}"
+    # 2. Word handling (.docx)
+    elif low.endswith(".docx"):
+        try:
+            import docx
+            doc = docx.Document(full)
+            paras = [p.text for p in doc.paragraphs if p.text.strip()]
+            data = "\n".join(paras)
+        except Exception as exc:
+            return f"Error reading Word document '{os.path.basename(full)}': {exc}"
+    # 3. PowerPoint handling (.pptx)
+    elif low.endswith(".pptx"):
+        try:
+            import pptx
+            prs = pptx.Presentation(full)
+            slide_texts = []
+            for idx, slide in enumerate(prs.slides, 1):
+                bullets = []
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        for p in shape.text_frame.paragraphs:
+                            if p.text.strip():
+                                bullets.append(p.text.strip())
+                if bullets:
+                    slide_texts.append(f"Slide {idx}:\n" + "\n".join(f"  • {b}" for b in bullets))
+            data = "\n\n".join(slide_texts)
+        except Exception as exc:
+            return f"Error reading PowerPoint presentation '{os.path.basename(full)}': {exc}"
+    # 4. Standard text/code file
+    else:
+        try:
+            with open(full, "r", encoding="utf-8", errors="replace") as fh:
+                data = fh.read(max_chars + 1)
+        except Exception as exc:
+            return f"Couldn't read it: {exc}"
+
     truncated = len(data) > max_chars
     return f"Contents of {os.path.basename(full)}:\n{data[:max_chars]}" + ("\n...(truncated)" if truncated else "")
+
 
 
 def send_to_claude(memory, prompt: str) -> str:
@@ -1417,9 +1550,14 @@ SKILLS = [
      "parameters": {"type": "object", "properties": {}, "required": []}},
     {"name": "type_text", "fn": type_text, "description": "Type/paste the given text into whatever window is currently focused.",
      "parameters": {"type": "object", "properties": {"text": {"type": "string", "description": "The text to type into the active window"}}, "required": ["text"]}},
-    {"name": "read_file", "fn": read_file, "description": "Read a text/code file so you can look at it and discuss or review it (e.g. downloads/notes.txt or a full path).",
-     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "File path or shortcut"}}, "required": ["path"]}},
+    {"name": "read_file", "fn": read_file, "description": "Read a text, code, PDF, Word (.docx), or PowerPoint (.pptx) file so you can inspect and discuss or review it (e.g. desktop/Rusty/documents/python_tips.pdf or downloads/notes.txt).",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "File path, filename, or shortcut"}}, "required": ["path"]}},
+    {"name": "open_file", "fn": open_file, "description": "Open a document, PDF, presentation, spreadsheet, code, or file with its default viewer or browser on Windows. Searches Desktop\\Rusty automatically if only given a filename.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "Path or name of the file to open (e.g. 'python_tips.pdf', 'World_Dog_Proposal.docx')"}}, "required": ["path"]}},
+    {"name": "switch_mode", "fn": switch_mode, "description": "Switch Rusty's operational mode between 'tactical' (fast, military brevity, spoken), 'engineer' (senior software architect, deep code & reasoning), and 'ghost' (silent stealth focus, voice muted).",
+     "parameters": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["tactical", "engineer", "ghost"], "description": "Target mode to switch to"}}, "required": ["mode"]}},
     {"name": "send_to_claude", "fn": send_to_claude, "description": "After writing a well-structured prompt for Claude, call this with the full prompt text — it copies it to the clipboard and opens Claude so Jay can paste it.",
+
      "parameters": {"type": "object", "properties": {"prompt": {"type": "string", "description": "The complete prompt text to hand to Claude"}}, "required": ["prompt"]}},
     {"name": "deep_think", "fn": deep_think, "description": "Consult a stronger model for a hard question, tricky reasoning, or careful writing, then relay the answer in your own voice.",
      "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "The question or task to think hard about"}}, "required": ["question"]}},

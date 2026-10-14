@@ -139,6 +139,10 @@
         } else if (d.type === 'wake_detected') {
           playChime('wake');
           J.wake(); if (d.command) J.log(d.command, 'usr');
+        } else if (d.type === 'mode_changed') {
+          if (window._applyModeUI) {
+            window._applyModeUI(d.mode, d.muted);
+          }
         } else if (d.type === 'progress') {
           if (d.message) {
             if (J.setProgress) {
@@ -209,6 +213,58 @@
     try { J.log(muted ? 'Voice synthesis muted.' : 'Voice synthesis active.', 'sys'); } catch (_) {}
   }, 'hudMuteBtn');
 
+  // --- Operational Mode Management ---
+  let currentMode = 'tactical';
+  const MODE_STYLES = {
+    tactical: { label: '⚡ TACTICAL', color: '#4fd8ff', bg: 'rgba(79,216,255,0.15)', border: 'rgba(79,216,255,0.6)', glow: 'rgba(79,216,255,0.35)' },
+    engineer: { label: '🛠️ ENGINEER', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.6)', glow: 'rgba(245,158,11,0.35)' },
+    ghost:    { label: '👻 GHOST',    color: '#c084fc', bg: 'rgba(192,132,252,0.15)', border: 'rgba(192,132,252,0.6)', glow: 'rgba(192,132,252,0.35)' }
+  };
+
+  const modeBadge = document.createElement('button');
+  modeBadge.id = 'hudModeBadge';
+  modeBadge.style.cssText = 'height:24px;padding:0 8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px;font-weight:bold;letter-spacing:1px;border-radius:3px;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all 0.25s;text-transform:uppercase;';
+
+  function applyModeUI(mode, isMuted) {
+    currentMode = (mode || 'tactical').toLowerCase();
+    const st = MODE_STYLES[currentMode] || MODE_STYLES.tactical;
+    modeBadge.innerHTML = st.label;
+    modeBadge.title = `Current Mode: ${currentMode.toUpperCase()} (Click to cycle: Tactical -> Engineer -> Ghost)`;
+    modeBadge.style.color = st.color;
+    modeBadge.style.background = st.bg;
+    modeBadge.style.border = `1px solid ${st.border}`;
+    modeBadge.style.boxShadow = `0 0 10px ${st.glow}`;
+
+    const modeEl = document.getElementById('mode');
+    if (modeEl) {
+      modeEl.textContent = currentMode.toUpperCase();
+      modeEl.style.color = st.color;
+      modeEl.style.textShadow = `0 0 16px ${st.glow}`;
+    }
+
+    if (isMuted !== undefined) {
+      muted = Boolean(isMuted);
+      muteBtn.innerHTML = muted ? '🔇' : '🔊';
+      muteBtn.title = muted ? 'Unmute Rusty' : 'Mute Rusty';
+    }
+
+    const sel = document.getElementById('selMode');
+    if (sel && sel.value !== currentMode) {
+      sel.value = currentMode;
+    }
+  }
+  window._applyModeUI = applyModeUI;
+  applyModeUI('tactical', false);
+
+  modeBadge.onclick = async () => {
+    const res = await post('/api/mode', {});
+    if (res && res.mode) {
+      applyModeUI(res.mode, res.muted);
+      try { J.log(`Operational mode set to ${res.mode.toUpperCase()}`, 'sys'); } catch (_) {}
+    }
+  };
+
+
   // --- Tactical Settings & Memory Drawer Modal ---
   const drawer = document.createElement('div');
   drawer.id = 'hudSettingsDrawer';
@@ -275,6 +331,14 @@
     const autoEnabled = auto && auto.enabled;
     pTog.innerHTML = `
       <div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
+        <span>Operational Mode</span>
+        <select id="selMode" style="background:#021019;border:1px solid #4fd8ff;color:#d7f5ff;font-size:11px;padding:3px 6px;border-radius:3px;cursor:pointer;">
+          <option value="tactical" ${currentMode === 'tactical' ? 'selected' : ''}>⚡ Tactical</option>
+          <option value="engineer" ${currentMode === 'engineer' ? 'selected' : ''}>🛠️ Engineer</option>
+          <option value="ghost" ${currentMode === 'ghost' ? 'selected' : ''}>👻 Ghost (Stealth)</option>
+        </select>
+      </div>
+      <div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
         <span>Autostart with Windows</span>
         <input type="checkbox" id="chkAuto" ${autoEnabled ? 'checked' : ''} style="cursor:pointer;">
       </div>
@@ -287,6 +351,18 @@
         <input type="checkbox" id="chkMute" ${muted ? 'checked' : ''} style="cursor:pointer;">
       </div>
     `;
+
+    const selMode = document.getElementById('selMode');
+    if (selMode) {
+      selMode.onchange = async () => {
+        const res = await post('/api/mode', { mode: selMode.value });
+        if (res && res.mode) {
+          applyModeUI(res.mode, res.muted);
+          try { J.log(`Mode set to ${res.mode.toUpperCase()}`, 'sys'); } catch (_) {}
+        }
+      };
+    }
+
 
     const chkAuto = document.getElementById('chkAuto');
     if (chkAuto) {
@@ -368,6 +444,7 @@
   const minBtn = mk('—', 'Minimise', () => winCall('minimize', '/api/window/minimize'), 'hudMinBtn');
   const closeBtn = mk('✕', 'Close', () => winCall('close', '/api/window/close'), 'hudCloseBtn');
 
+  ctl.appendChild(modeBadge);
   ctl.appendChild(muteBtn);
   ctl.appendChild(settingsBtn);
   ctl.appendChild(pinBtn);

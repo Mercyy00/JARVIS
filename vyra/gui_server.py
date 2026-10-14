@@ -81,7 +81,52 @@ wake_pause_event = threading.Event()
 wake_stop_event = threading.Event()
 is_manual_active = False
 is_muted_global = False
+current_mode = config.get("assistant", {}).get("mode", "tactical").lower()
 server_loop: asyncio.AbstractEventLoop | None = None
+
+
+def set_active_mode(new_mode: str) -> str:
+    global current_mode, is_muted_global
+    clean = str(new_mode or "").strip().lower()
+    if clean in ("stealth", "silent"):
+        clean = "ghost"
+    if clean not in ("tactical", "engineer", "ghost"):
+        clean = "tactical"
+
+    current_mode = clean
+    try:
+        brain.set_mode(clean)
+    except Exception:
+        pass
+
+    try:
+        from .config import load_config, save_config
+        cfg = load_config()
+        if "assistant" not in cfg:
+            cfg["assistant"] = {}
+        cfg["assistant"]["mode"] = clean
+        save_config(cfg)
+    except Exception:
+        pass
+
+    if clean == "ghost":
+        is_muted_global = True
+    else:
+        is_muted_global = False
+
+    logger.info("Operational mode switched to: %s (muted=%s)", current_mode, is_muted_global)
+
+    if server_loop and server_loop.is_running():
+        asyncio.run_coroutine_threadsafe(
+            broadcast_ws({"type": "mode_changed", "mode": current_mode, "muted": is_muted_global}),
+            server_loop
+        )
+        asyncio.run_coroutine_threadsafe(
+            broadcast_ws({"type": "log", "level": "system", "message": f"Operational mode switched to: {current_mode.upper()}"}),
+            server_loop
+        )
+    return current_mode
+
 
 class _LazyEars:
     """Defer the heavy Whisper load so the HUD window appears instantly on boot.
@@ -142,8 +187,9 @@ async def ws_handler(request):
     await ws.prepare(request)
     ws_clients.add(ws)
 
-    # Send initial telemetry
+    # Send initial telemetry and mode state
     await ws.send_str(json.dumps(get_telemetry()))
+    await ws.send_str(json.dumps({"type": "mode_changed", "mode": current_mode, "muted": is_muted_global}))
 
     try:
         async for msg in ws:
@@ -244,10 +290,33 @@ async def handle_chat(request):
     data = await request.json()
     msg = data.get("message", "").strip()
     mute = data.get("mute", False)
+    if current_mode == "ghost":
+        mute = True
     is_muted_global = mute
 
     if not msg:
         return web.json_response({"reply": ""})
+
+    # Intercept direct /mode command
+    low_msg = msg.lower()
+    if low_msg.startswith("/mode") or low_msg.startswith("mode "):
+        parts = msg.split(None, 1)
+        sub = parts[1].strip().lower() if len(parts) > 1 else ""
+        if sub in ("tactical", "engineer", "ghost", "stealth", "silent"):
+            new_mode = set_active_mode(sub)
+            reply = f"Switched operational mode to {new_mode.upper()}, Sir."
+            await broadcast_ws({"type": "speech", "text": reply})
+            await broadcast_ws({"type": "state", "state": "idle"})
+            if not is_muted_global:
+                threading.Thread(target=lambda: mouth.speak(reply), daemon=True).start()
+            return web.json_response({"reply": reply, "mode": new_mode})
+        elif not sub:
+            reply = f"Current operational mode is {current_mode.upper()}, Sir. Available modes: tactical, engineer, ghost."
+            await broadcast_ws({"type": "speech", "text": reply})
+            await broadcast_ws({"type": "state", "state": "idle"})
+            if not is_muted_global:
+                threading.Thread(target=lambda: mouth.speak(reply), daemon=True).start()
+            return web.json_response({"reply": reply, "mode": current_mode})
 
     mouth.stop()
     logger.info("chat in: %s", msg)
@@ -256,7 +325,7 @@ async def handle_chat(request):
     notifier = make_progress_notifier(loop, mute=mute)
     try:
         # Run the (blocking, network-bound) brain call off the event loop so
-        # telemetry + WebSocket traffic keep flowing while FRIDAY thinks.
+        # telemetry + WebSocket traffic keep flowing while Rusty thinks.
         reply = await asyncio.to_thread(brain.ask, msg, progress_callback=notifier)
     except Exception as exc:
         logger.exception("brain error (chat)")
@@ -266,12 +335,13 @@ async def handle_chat(request):
     await broadcast_ws({"type": "state", "state": "idle"})
     await broadcast_ws({"type": "speech", "text": reply})
 
-    if not mute:
+    if not mute and not is_muted_global:
         def _speak():
             mouth.speak(reply)
         threading.Thread(target=_speak, daemon=True).start()
 
-    return web.json_response({"reply": reply})
+    return web.json_response({"reply": reply, "mode": current_mode})
+
 
 
 active_stop_event: threading.Event | None = None
@@ -712,20 +782,32 @@ def _on_wake():
 
 
 def _start_wake():
-    """Prefer the instant openWakeWord engine; fall back to the Whisper loop."""
-    global wake_listener
+    """Start the background acoustic wake listener.
+    Runs Whisper acoustic monitoring to spot all custom wake words including 'Rusty',
+    'Hey Rusty', 'Buddy', and configured variants."""
+    threading.Thread(target=wake_word_listener_thread, daemon=True).start()
+    print(f"[WAKE] Background passive acoustic monitoring started for: {wake_words}")
+
+
+async def handle_mode_api(request):
     try:
-        from vyra import wake
-        wake_listener = wake.WakeListener(
-            on_wake=_on_wake,
-            enabled_fn=lambda: wake_enabled,
-            pause_fn=lambda: (wake_pause_event.is_set() or is_manual_active),
-        )
-        wake_listener.start()
-        print("[WAKE] Using openWakeWord (instant).")
-    except Exception as exc:
-        print(f"[WAKE] openWakeWord unavailable ({exc}); falling back to Whisper wake.")
-        threading.Thread(target=wake_word_listener_thread, daemon=True).start()
+        data = await request.json()
+        target = data.get("mode")
+    except Exception:
+        target = None
+    if not target:
+        order = ["tactical", "engineer", "ghost"]
+        try:
+            idx = order.index(current_mode)
+            target = order[(idx + 1) % len(order)]
+        except Exception:
+            target = "tactical"
+    mode = set_active_mode(target)
+    return web.json_response({"mode": mode, "muted": is_muted_global})
+
+
+async def handle_mode_get(request):
+    return web.json_response({"mode": current_mode, "muted": is_muted_global})
 
 
 async def handle_memory(request):
@@ -735,6 +817,7 @@ async def handle_memory(request):
         "links": memory.list_links(),
         "journal": journal if journal != "(no recent history)" else "No recent journal recorded."
     })
+
 
 
 # ---------------------------------------------------------------------------
@@ -913,6 +996,8 @@ def create_app():
     app.router.add_post("/api/window/close", handle_window_close)
     app.router.add_get("/api/autostart", handle_autostart_get)
     app.router.add_post("/api/autostart/toggle", handle_autostart_toggle)
+    app.router.add_get("/api/mode", handle_mode_get)
+    app.router.add_post("/api/mode", handle_mode_api)
 
     async def handle_index(request):
         return web.FileResponse(GUI_DIR / "index.html")

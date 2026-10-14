@@ -128,6 +128,7 @@ def record_until_silence(
 
 
 DEFAULT_WAKE_WORDS = [
+    "rusty", "rusti", "rusdy", "rasty", "trusty", "dusty", "rusty's",
     "friday", "fraiday", "fridey", "phriday", "priday", "fryday",
     "buddy", "badi", "jarvis", "vyra", "vira", "viera"
 ]
@@ -138,29 +139,43 @@ def detect_wake_word(
     wake_words: list[str] | None = None
 ) -> tuple[bool, str, str]:
     """
-    Check if an utterance contains a wake phrase (e.g. 'Hey FRIDAY', 'FRIDAY', 'Hey buddy', 'Buddy', 'Jarvis').
+    Check if an utterance contains a wake phrase (e.g. 'Hey Rusty', 'Rusty', 'Hey buddy', 'Buddy', 'Jarvis').
     Returns (is_wake: bool, wake_phrase: str, command: str).
     """
     if not text:
         return False, "", ""
 
     words = wake_words or DEFAULT_WAKE_WORDS
+    words_sorted = sorted(words, key=len, reverse=True)
     pattern = re.compile(
-        r'\b((?:hey|hi|hello|ok|okay|yo)\s+)?(' + '|'.join(re.escape(w) for w in words) + r'|fri\s*day|frai\s*day|phri\s*day)\b',
+        r'\b((?:hey|hi|hello|ok|okay|yo|listen|oi)[,\s]+)?(' + '|'.join(re.escape(w) for w in words_sorted) + r'|fri\s*day|frai\s*day|phri\s*day)\b',
         re.IGNORECASE
     )
 
     for match in pattern.finditer(text):
         start = match.start()
-        before_text = text[:start].strip()
+        before_text = text[:start].strip(" ,.!?-")
         last_word = before_text.split()[-1].lower() if before_text else ""
         if last_word in ("my", "his", "her", "their", "our", "a", "an", "any"):
             continue
 
-        wake_phrase = match.group().strip()
+        wake_phrase = match.group().strip(" ,.!?-")
         after = text[match.end():].strip(" ,.!?-")
-        before = text[:start].strip(" ,.!?-")
-        command = after if after else before
+        
+        # If before is only a greeting (e.g. "Hey", "Hi", "Hello"), discard it as command
+        is_before_only_greeting = False
+        if before_text:
+            cleaned_before = re.sub(r'^(?:hey|hi|hello|ok|okay|yo|listen|oi)\b[,\s]*', '', before_text, flags=re.IGNORECASE).strip(" ,.!?-")
+            if not cleaned_before:
+                is_before_only_greeting = True
+
+        if after:
+            command = after
+        elif before_text and not is_before_only_greeting:
+            command = before_text
+        else:
+            command = ""
+
         return True, wake_phrase, command
 
     return False, "", ""

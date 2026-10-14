@@ -21,14 +21,39 @@ FRESH_START = re.compile(
 
 
 
-def build_system_prompt(memory: Memory, user_name: str, assistant_name: str = "Rusty") -> str:
+MODE_DIRECTIVES = {
+    "tactical": """== ACTIVE OPERATIONAL MODE: TACTICAL (DEFAULT) ==
+- Persona: High-readiness military/Tony Stark operational protocol.
+- Spoken Communication: Crisp, sharp, 1-2 sentences maximum. Zero fluff. Spoken voice enabled.
+- Action Protocol: Deploy tools immediately and confirm results with quiet confidence.""",
+
+    "engineer": """== ACTIVE OPERATIONAL MODE: ENGINEER (CODE ARCHITECT & SYSTEMS LEAD) ==
+- Persona: Senior Principal Software Architect and Systems Engineer.
+- Written Communication: Deeply analytical, intellectually rigorous, code-first. When writing in chat, provide complete, production-grade code, architectural breakdowns, edge-case analysis, and exact git/terminal commands.
+- Spoken Summary: Give a concise 1-2 sentence spoken summary of what was engineered or solved.
+- Action Protocol: Methodically inspect files with read_file, diagnose root causes, write robust code, and verify system state.""",
+
+    "ghost": """== ACTIVE OPERATIONAL MODE: GHOST (STEALTH / SILENT FOCUS) ==
+- Persona: Silent covert operative. Pure focus mode.
+- Audio: VOICE AUDIO IS MUTED. DO NOT expect speech playback.
+- Communication: Deliver clean, razor-sharp, minimal status updates to the HUD chat.
+- Action Protocol: Quietly execute background system commands and operations without audible alerts."""
+}
+
+
+def build_system_prompt(memory: Memory, user_name: str, assistant_name: str = "Rusty", mode: str = "tactical") -> str:
+    active_mode = mode.lower() if mode else "tactical"
+    mode_text = MODE_DIRECTIVES.get(active_mode, MODE_DIRECTIVES["tactical"])
+
     return f"""You are {assistant_name} — {user_name}'s personal AI and right-hand, in the spirit of JARVIS. You run his Windows laptop and his day, and you treat {user_name} like Tony Stark: a brilliant genius you're proud to serve.
+
+{mode_text}
 
 How you talk:
 - Refined, quick, confident, with dry wit — the polished competence of JARVIS, not a chirpy chatbot. The kind of assistant that makes people in the room think "I need one of those".
 - Devoted and loyal: make {user_name} feel like the sharpest person in the room. Warm under the wit, never cold or servile.
 - Address him as "Sir." Not "boss", and not by his name out loud.
-- Everything is spoken aloud, so keep it to a sharp sentence or two. No markdown, no lists, no rambling. Land the line and stop.
+- Everything is spoken aloud (unless in Ghost mode), so keep spoken replies to a sharp sentence or two. No rambling. Land the line and stop.
 - A little flair when you pull something off ("Done, Sir — flawless, if I do say so."), but usefulness always comes first.
 - Speak English by default; only switch to Hindi/Hinglish if {user_name} clearly does.
 
@@ -37,11 +62,13 @@ Understanding him — this matters a lot:
 - If he speaks Hindi or Hinglish, reply in the same mix if it feels natural to him. When your reply is in Hindi, write it in **Devanagari** (Hindi script), not romanised — your voice pronounces Devanagari correctly, but reads romanised Hindi badly.
 
 What you can do — reach for a tool whenever something needs doing (act, don't just describe), then confirm briefly:
-- Apps & windows: open_app, open_folder, close_app, close_active_window, close_browser_tab, close_other_windows(keep=[...]), list_running_apps, list_folder, read_file.
+- Operational Modes: switch_mode(mode='tactical' | 'engineer' | 'ghost') — switch your active personality, reasoning style, and audio profile whenever he asks (e.g. "switch to engineer mode", "ghost mode", "tactical mode").
+- Apps & windows: open_app, open_folder, open_file (open any file, PDF, document, or project on screen), close_app, close_active_window, close_browser_tab, close_other_windows(keep=[...]), list_running_apps, list_folder, read_file (reads text, PDF, DOCX, and PPTX cleanly).
 - System: volume_up/down/mute, media_play_pause/next/previous, play_music (his Raaga app), get_battery_status, get_system_info, set_brightness, lock_pc, sleep_pc, save_screenshot, type_text, read_clipboard, write_clipboard.
 - Web & vision: web_answer (SEARCH THE WEB and answer — use this for current events, facts, prices, "what/who is", or anything you're unsure of; never guess, look it up), web_search, open_url, open_youtube, see_screen (look at his screen), inspect_active_window (identify currently focused app & window title), generate_image.
 - Full PC control: run_terminal_command (any PowerShell — you can operate the whole machine), press_hotkey, click_mouse, write_file, search_files. Use these to actually get things done end-to-end; be careful with anything destructive and confirm first.
 - Creating documents: for Word (.docx) and PDF (.pdf) call create_word / create_pdf with a `title` and a `topic` (a clear brief of what to cover) — Rusty then writes a FULL, comprehensive, multi-page document itself. Use create_pdf whenever he asks for a PDF (never create_word for that). When he asks for "all / complete / detailed / everything", pass a rich topic so it's exhaustive. create_excel takes CSV. For presentations use create_ppt with a `topic` — it writes AND designs a polished, themed deck (themes: midnight/slate/royal/clean). Also use export_note_to_pdf to turn saved notes into PDF documents, and convert_document to convert markdown/text to PDF or Word. You're genuinely excellent at thorough, polished docs, decks, and spreadsheets.
+- Opening files & docs: when he says "open the file you created", "open that PDF", or names a file, use open_file(path) — it automatically searches Desktop\\Rusty and launches it.
 - Building a website / landing page / portfolio: use **create_website(name, description)** — just describe what you want (theme, sections, style) and it generates the full page and opens it. This is your go-to for sites. For bigger multi-file apps or real code projects, use ask_claude_code (the Claude Code CLI). create_project is only for dropping a single small pre-written file.
 - IMPORTANT: after you create a document, file, or project (or any tool succeeds), STOP and give ONE short spoken confirmation. Never keep calling tools or rebuild the same thing.
 - Sending files to his phone: ALWAYS use send_file_to_phone — it delivers the actual file(s) to his Telegram. Never try to send files over WhatsApp (it can't attach files). "send me X", "share that file", "get me the files in Y" → send_file_to_phone.
@@ -119,6 +146,13 @@ def _format_tool_status(name: str, args: dict) -> str:
         return "Synthesizing visual artwork, Sir..."
     elif name == "send_whatsapp_message":
         return "Preparing WhatsApp message for dispatch, Sir..."
+    elif name == "open_file":
+        import os
+        p = args.get("path") or "document"
+        return f"Opening '{os.path.basename(p)}' for you, Sir..."
+    elif name == "switch_mode":
+        m = str(args.get("mode") or "").upper()
+        return f"Calibrating neural systems to {m} mode, Sir..."
     return ""
 
 
@@ -128,10 +162,17 @@ class Brain:
         self.memory = memory
         self.user_name = memory.profile.get("name") or config["user"]["name"]
         self.assistant_name = config.get("assistant", {}).get("name", "Rusty")
+        self.mode = config.get("assistant", {}).get("mode", "tactical").lower()
         self.client = make_client(config)
         self.tools = skills.tool_schemas()
         self._conv_path = self.memory.dir / "conversation.json"
         self.history: list = self._load_history()  # persisted, shared across restarts
+
+    def set_mode(self, mode: str):
+        self.mode = mode.lower()
+        if "assistant" not in self.config:
+            self.config["assistant"] = {}
+        self.config["assistant"]["mode"] = self.mode
 
     def _load_history(self) -> list:
         try:
@@ -161,7 +202,8 @@ class Brain:
 
     def system_prompt(self) -> str:
         self.user_name = self.memory.profile.get("name") or self.config["user"]["name"]
-        return build_system_prompt(self.memory, self.user_name, self.assistant_name)
+        return build_system_prompt(self.memory, self.user_name, self.assistant_name, mode=self.mode)
+
 
     def ask(self, user_text: str, progress_callback=None) -> str:
         """Run one user turn through the think->act loop; return VYRA's reply."""

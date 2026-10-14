@@ -25,7 +25,8 @@ load_dotenv(ROOT / ".env")
 
 DEFAULTS: dict = {
     "assistant": {
-        "name": "FRIDAY",
+        "name": "Rusty",
+        "mode": "tactical",
     },
     "llm": {
         "provider": "google",
@@ -41,9 +42,9 @@ DEFAULTS: dict = {
     "voice": {
         "name": "en-US-GuyNeural",
         "rate": "+10%",
-        "pronounce_vyra": "Friday",
+        "pronounce_vyra": "Rusty",
         "wake_enabled": True,
-        "wake_words": ["friday", "buddy", "jarvis", "vyra"],
+        "wake_words": ["rusty", "friday", "buddy", "jarvis"],
     },
 }
 
@@ -83,5 +84,21 @@ def load_config() -> dict:
     return config
 
 
+def save_config(config: dict) -> None:
+    """Save config updates back to config.json cleanly."""
+    try:
+        existing = {}
+        if CONFIG_PATH.exists():
+            try:
+                existing = json.loads(CONFIG_PATH.read_text("utf-8"))
+            except Exception:
+                pass
+        merged = _deep_merge(existing, config)
+        CONFIG_PATH.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        print(f"[CONFIG] Failed to save config: {exc}")
+
+
 def has_api_key(config: dict) -> bool:
     return bool(config["llm"].get("api_key"))
+
