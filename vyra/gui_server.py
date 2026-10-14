@@ -1018,9 +1018,11 @@ def main():
             webview.start()
             sys.exit(0)
         except Exception as exc:
-            print(f"[HUD] Native window notice ({exc}), falling back to app window...")
+            logger.exception("Failed to start native webview window")
+            print(f"[HUD] Native window error ({exc})")
+            sys.exit(1)
 
-    # Fallback to browser app window — start the server first, then open the browser.
+    # Only run browser mode if --browser was explicitly passed on the command line
     def run_server_bg():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -1030,7 +1032,7 @@ def main():
     t.start()
     _wait_for_server("127.0.0.1", port)
     launch_browser_app(url, win_w, win_h, win_x, win_y)
-    print(f"[HUD] Running at {url} — press Ctrl+C to terminate.")
+    print(f"[HUD] Running browser mode at {url} — press Ctrl+C to terminate.")
     try:
         t.join()
     except KeyboardInterrupt:
