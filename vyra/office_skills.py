@@ -473,5 +473,48 @@ def _render_pptx(path, deck, theme_name="midnight"):
     return len(slides)
 
 
+def export_note_to_pdf(memory, query: str = "", filename: str = "") -> str:
+    """Export a saved note or note collection from memory into a clean, formatted PDF."""
+    notes = memory.list_notes() if hasattr(memory, "list_notes") else []
+    if not notes:
+        return "You don't have any saved notes yet, Sir. Ask me to save a note first."
+
+    target_note = None
+    if query and query.strip():
+        q = query.strip().lower()
+        for n in reversed(notes):
+            if q in n.get("text", "").lower():
+                target_note = n
+                break
+    if not target_note:
+        target_note = notes[-1]
+
+    note_text = target_note.get("text", "")
+    ts = target_note.get("ts", "")
+    title = f"Note — {ts[:10] if ts else 'Export'}"
+    fn = filename or f"Note_{ts.replace(':', '-').replace('T', '_') if ts else 'Export'}"
+    content = f"# {title}\n\n*Recorded on {ts}*\n\n{note_text}"
+    return create_pdf(memory, title=title, content=content, filename=fn)
 
 
+def convert_document(memory, source_path: str, target_format: str = "pdf") -> str:
+    """Convert a text or markdown file into a formatted PDF or Word document."""
+    raw = (source_path or "").strip().strip('"').strip("'")
+    if not raw:
+        return "Please specify the path of the file you want to convert, Sir."
+    full = os.path.abspath(os.path.expandvars(raw))
+    if not os.path.exists(full):
+        return f"Source file does not exist at '{full}', Sir."
+    target_format = target_format.lower().strip().lstrip(".")
+    try:
+        with open(full, "r", encoding="utf-8", errors="replace") as fh:
+            content = fh.read()
+    except Exception as exc:
+        return f"Could not read source file: {exc}"
+
+    base_name = os.path.splitext(os.path.basename(full))[0]
+    if target_format == "pdf":
+        return create_pdf(memory, title=base_name, content=content, filename=base_name + ".pdf")
+    elif target_format in ("docx", "word"):
+        return create_word(memory, title=base_name, content=content, filename=base_name + ".docx")
+    return f"Unsupported target format '{target_format}'. Supported formats: pdf, docx."

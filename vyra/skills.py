@@ -198,6 +198,25 @@ def _resolve_path(path_str: str) -> str:
     return os.path.abspath(os.path.expandvars(path_str))
 
 
+PROTECTED_PATH_PATTERNS = [
+    r"\\windows\\system32\\config",
+    r"\\windows\\system32\\drivers\\etc\\hosts",
+    r"\.env($|\.)",
+    r"id_rsa($|\.)",
+    r"id_ed25519($|\.)",
+    r"\.pem$",
+    r"\\user data\\default\\(cookies|login data|web data)",
+]
+
+
+def is_path_safe(resolved_path: str) -> bool:
+    norm = os.path.normpath(resolved_path).lower()
+    for pat in PROTECTED_PATH_PATTERNS:
+        if re.search(pat, norm):
+            return False
+    return True
+
+
 def _get_user_windows() -> list[dict]:
     try:
         out = subprocess.check_output(['tasklist', '/v', '/fo', 'csv'], text=True, errors='replace', timeout=8)
@@ -810,6 +829,8 @@ def type_text(memory, text: str) -> str:
 def read_file(memory, path: str, max_chars: int = 4000) -> str:
     """Read a text file so FRIDAY can look at and discuss it."""
     full = _resolve_path(path)
+    if not is_path_safe(full):
+        return f"Access denied: '{os.path.basename(full)}' is protected for system security, Sir."
     if not os.path.exists(full):
         return f"There's no file at {full}."
     if os.path.isdir(full):
@@ -905,30 +926,95 @@ def list_routines(memory) -> str:
     return "Routines ready to go: " + ", ".join(routines.list_names()) + "."
 
 
+DANGEROUS_COMMANDS = [
+    r"\bformat\s+[a-z]:",
+    r"\bdiskpart\b",
+    r"\bbcdedit\b",
+    r"rmdir\s+/[sq]\s+[a-z]:\\?$",
+    r"del\s+/[fsq]+\s+[a-z]:\\?$",
+    r"remove-item\s+.*-(recurse|force)\s+[a-z]:\\?$",
+]
+
+
 def run_terminal_command(memory, command: str) -> str:
     """Execute a PowerShell or CMD command directly on Jay's computer and return output."""
+    cmd_lower = command.lower().strip()
+    for pat in DANGEROUS_COMMANDS:
+        if re.search(pat, cmd_lower):
+            return "Command execution blocked: Command matches destructive drive or partition patterns, Sir. Please run critical disk operations manually."
+
     try:
-        res = subprocess.run(
+        proc = subprocess.Popen(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=25,
             cwd=str(ROOT)
         )
-        out = (res.stdout or "").strip()
-        err = (res.stderr or "").strip()
+        try:
+            out, err = proc.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out, err = proc.communicate()
+            return f"Command timed out after 30 seconds, Sir.\nPartial output:\n{(out or '')[:1000]}"
+
+        out = (out or "").strip()
+        err = (err or "").strip()
         combined = out
         if err:
             combined = (combined + "\n[STDERR]: " + err).strip() if combined else f"[STDERR]: {err}"
         if not combined:
-            return f"Command executed successfully (exit code {res.returncode}) with no output."
-        if len(combined) > 2000:
-            combined = combined[:2000] + "\n...[output truncated]"
+            return f"Command executed successfully (exit code {proc.returncode}) with no output."
+        if len(combined) > 2500:
+            combined = combined[:2500] + "\n...[output truncated]"
         return f"Output:\n{combined}"
-    except subprocess.TimeoutExpired:
-        return "Command timed out after 25 seconds."
     except Exception as exc:
         return f"Error executing command: {exc}"
+
+
+def inspect_active_window(memory) -> str:
+    """Identify which application and document window is currently active/focused on screen."""
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return "No active foreground window detected, Sir."
+
+        length = user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        title = buf.value
+
+        pid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+
+        pname = "Unknown"
+        try:
+            pname = psutil.Process(pid.value).name()
+        except Exception:
+            pass
+
+        return f"Active Application: {pname} (PID: {pid.value})\nWindow Title: '{title or '(Untitled)'}'"
+    except Exception as exc:
+        return f"Could not inspect active window: {exc}"
+
+
+def delete_link(memory, name: str) -> str:
+    """Delete a saved shortcut link from memory."""
+    ok = memory.delete_link(name)
+    return f"Removed the link for '{name}', Sir." if ok else f"I couldn't find a saved link named '{name}', Sir."
+
+
+def forget_fact(memory, fact: str) -> str:
+    """Remove a fact or detail from long-term memory about Jay."""
+    ok = memory.delete_about(fact)
+    return f"Understood, Sir — I've removed that from my memory." if ok else f"I couldn't find any memory matching '{fact}', Sir."
+
+
+def delete_note(memory, query: str) -> str:
+    """Delete a note from memory."""
+    ok = memory.delete_note(query)
+    return f"Deleted matching note, Sir." if ok else f"No note matching '{query}' found to delete, Sir."
 
 
 def press_hotkey(memory, combo: str) -> str:
@@ -1002,6 +1088,8 @@ def write_file(memory, path: str, content: str) -> str:
     """Create or write content to a text or code file."""
     try:
         full_path = _resolve_path(path)
+        if not is_path_safe(full_path):
+            return f"Access denied: '{os.path.basename(full_path)}' is in a protected path, Sir."
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         with open(full_path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -1159,6 +1247,9 @@ def send_file_to_phone(memory, path: str) -> str:
     sent, skipped = 0, 0
     for fp in targets:
         try:
+            if not is_path_safe(fp):
+                skipped += 1
+                continue
             if os.path.getsize(fp) > 49 * 1024 * 1024:
                 skipped += 1
                 continue
@@ -1379,6 +1470,18 @@ SKILLS = [
      "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
     {"name": "list_notes", "fn": list_notes, "description": "List all saved notes.",
      "parameters": {"type": "object", "properties": {}, "required": []}},
+    {"name": "delete_note", "fn": delete_note, "description": "Delete a note from memory by a word or phrase from its content.",
+     "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Search text to identify the note to delete"}}, "required": ["query"]}},
+    {"name": "delete_link", "fn": delete_link, "description": "Delete a saved named link/shortcut from memory.",
+     "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Name of the link to remove"}}, "required": ["name"]}},
+    {"name": "forget_fact", "fn": forget_fact, "description": "Remove or forget an outdated fact from long-term memory about Jay.",
+     "parameters": {"type": "object", "properties": {"fact": {"type": "string", "description": "Fact or keyword to remove from memory"}}, "required": ["fact"]}},
+    {"name": "inspect_active_window", "fn": inspect_active_window, "description": "Identify which application, document, or window is currently active/focused on screen.",
+     "parameters": {"type": "object", "properties": {}, "required": []}},
+    {"name": "export_note_to_pdf", "fn": _office.export_note_to_pdf, "description": "Export a saved note from memory into a clean, formatted PDF document and open it.",
+     "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Optional search term for the note (defaults to the most recent note)"}, "filename": {"type": "string", "description": "Optional custom filename"}}, "required": []}},
+    {"name": "convert_document", "fn": _office.convert_document, "description": "Convert a text or markdown file into a formatted PDF or Word document.",
+     "parameters": {"type": "object", "properties": {"source_path": {"type": "string", "description": "Path to the markdown or text file"}, "target_format": {"type": "string", "description": "'pdf' or 'docx'"}}, "required": ["source_path"]}},
     {"name": "get_datetime", "fn": get_datetime, "description": "Get the current date and time.",
      "parameters": {"type": "object", "properties": {}, "required": []}},
 ]

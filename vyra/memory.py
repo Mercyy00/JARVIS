@@ -39,7 +39,17 @@ class Memory:
 
     @staticmethod
     def _save(path: Path, data):
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+        try:
+            tmp.replace(path)
+        except Exception:
+            path.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except Exception:
+                    pass
 
     # --- profile ---
     def set_name(self, name: str):
@@ -47,11 +57,35 @@ class Memory:
         self._save(self.profile_path, self.profile)
 
     def add_about(self, fact: str):
-        self.profile.setdefault("about", []).append(fact)
+        clean = fact.strip().lstrip("-* ").strip()
+        if not clean:
+            return
+        about = self.profile.setdefault("about", [])
+        clean_lower = clean.lower()
+        if any(existing.lower() == clean_lower for existing in about):
+            return
+        about.append(clean)
         self._save(self.profile_path, self.profile)
 
+    def delete_about(self, target: str) -> bool:
+        target_clean = target.strip().lower()
+        about = self.profile.get("about", [])
+        initial_len = len(about)
+        self.profile["about"] = [f for f in about if target_clean not in f.lower()]
+        if len(self.profile["about"]) < initial_len:
+            self._save(self.profile_path, self.profile)
+            return True
+        return False
+
     def add_preference(self, pref: str):
-        self.profile.setdefault("preferences", []).append(pref)
+        clean = pref.strip().lstrip("-* ").strip()
+        if not clean:
+            return
+        prefs = self.profile.setdefault("preferences", [])
+        clean_lower = clean.lower()
+        if any(existing.lower() == clean_lower for existing in prefs):
+            return
+        prefs.append(clean)
         self._save(self.profile_path, self.profile)
 
     def profile_text(self) -> str:
@@ -70,6 +104,14 @@ class Memory:
         self.links[name.lower().strip()] = url
         self._save(self.links_path, self.links)
 
+    def delete_link(self, name: str) -> bool:
+        key = name.lower().strip()
+        if key in self.links:
+            del self.links[key]
+            self._save(self.links_path, self.links)
+            return True
+        return False
+
     def get_link(self, name: str):
         return self.links.get(name.lower().strip())
 
@@ -80,6 +122,15 @@ class Memory:
     def add_note(self, text: str):
         self.notes.append({"text": text, "ts": datetime.now().isoformat(timespec="seconds")})
         self._save(self.notes_path, self.notes)
+
+    def delete_note(self, query: str) -> bool:
+        q = query.strip().lower()
+        initial_len = len(self.notes)
+        self.notes = [n for n in self.notes if q not in n.get("text", "").lower()]
+        if len(self.notes) < initial_len:
+            self._save(self.notes_path, self.notes)
+            return True
+        return False
 
     def list_notes(self) -> list:
         return list(self.notes)
