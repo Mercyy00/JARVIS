@@ -1,157 +1,119 @@
-# VYRA
+# Rusty // Autonomous AI Operating System
 
-A JARVIS-style personal assistant for Windows — a buddy that knows you,
-remembers your conversations, controls your laptop, and (soon) talks to you.
+A JARVIS-class personal AI assistant and desktop operating system for Windows — engineered for low-latency voice interaction, local whisper transcription, tactical holographic HUD telemetry, system automation, and cross-platform remote phone control.
 
-**Phase 1 is here:** a text brain with persistent memory and real skills.
-Voice, full PC control, and browser automation come next.
+---
 
-## Setup
+## Architecture Overview
 
-1. Install Python 3.10+ and the dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. Give VYRA a brain (an API key). Copy the examples and fill them in:
-
-   ```bash
-   copy config.example.json config.json
-   copy .env.example .env
-   ```
-
-   Put your key in `.env`:
-
-   ```
-   VYRA_API_KEY=your-key-here
-   ```
-
-3. Run her:
-
-   ```bash
-   python main.py
-   ```
-
-## Choosing / switching the brain
-
-Everything except the LLM is free. The brain is swappable — edit `config.json`:
-
-```json
-{
-  "llm": { "provider": "claude", "model": "claude-sonnet-5-5" }
-}
-```
-
-| provider     | model example                 | notes                                  |
-|--------------|-------------------------------|----------------------------------------|
-| `claude`     | `claude-sonnet-5-5`           | Recommended. Best reasoning/tool use.  |
-| `openrouter` | `anthropic/claude-sonnet-5-5` | Many models, some free. Set your key.  |
-| `google`     | `gemini-2.0-flash`            | Generous free tier.                    |
-
-Switching providers = change `provider` + `model` and use that provider's key in
-`.env`. No code changes. (Model ids drift over time — check the provider's docs
-for the current name.)
-
-## What VYRA can do now
-
-- Open apps and folders (`downloads`, `documents`, a full path, …)
-- Google search, open any URL, open YouTube (or search it)
-- Save named links and reopen them — perfect for Google Meet links
-- Remember lasting facts about you, keep notes, know the date/time
-- Timed spoken reminders ("remind me in 20 minutes to…", "remind me at 5pm")
-- Lock or sleep the PC, set screen brightness, save a screenshot, report system info, type text into the active window
-
-Just talk to her: *"save my standup meet as https://meet.google.com/xxx"*, then
-later *"open my standup meet"*.
-
-In-chat commands: `/name <you>`, `/links`, `/notes`, `/help`, `/bye`.
-
-## Technical JARVIS HUD (GUI Mode)
-
-Launch the futuristic Stark Industries holographic interface:
-
-```bash
-.\run_gui.bat
-```
-
-- **Holographic Arc Reactor Core**: Animated rotating HUD rings and pulsing reactor core indicating standby, listening, thinking, and speaking states.
-- **Hardware & Telemetry**: Live CPU load, RAM usage, RTX 2050 GPU status, system chronometer, and neural latency.
-- **Vocal & Text Interaction**: Click the reactor core or press **Spacebar** to speak, or type directives in the command bar.
-- **Live Waveform & Logs**: Real-time audio waveform visualizer and monospace console logging all tool executions and responses.
-- **Memory Vault**: Live dossier tab showing user profile facts, saved Google Meet links, and session journal records.
-
-## Talk to her out loud (Voice Mode)
-
-Install the audio extras once, then run the voice loop:
-
-```bash
-pip install -r requirements-voice.txt
-python voice_chat.py
-```
-
-- Default is **push-to-talk**: press Enter, speak, and she replies in a British
-  neural voice (`en-GB-RyanNeural`). First run downloads a small Whisper model.
-- `python voice_chat.py --wake` is **always-listening**: start a command with
-  "VYRA ..." and only then does she act.
-
-Speech is transcribed locally (private); only the brain and the voice synthesis
-go online.
-
-
-## Generate images (Phase 4 — browser automation)
-
-VYRA can create images with **no API key or quota** by driving a real,
-logged-in browser (Google Gemini web). Install the extra once and sign in a
-single time — the login is saved to a private profile under `data/`:
-
-```bash
-pip install -r requirements-browser.txt
-python -m playwright install chromium
-python -m vyra.browser --login
-```
-
-Then just ask her: *"make an image of a neon cyberpunk fox"*. She drives the
-browser, saves the result to `data/generated_images/`, and opens it. Test it
-directly with:
-
-```bash
-python -m vyra.browser --test "a neon cyberpunk fox"
-```
-
-This path depends on Gemini's web UI, so it's inherently more fragile than the
-rest — selectors live at the top of `vyra/browser.py` with fallbacks if the UI
-changes.
-
-
-## How she remembers
-
-Stored as plain files under `data/` (gitignored, private to you):
-
-- `profile.json` — long-term facts about you
-- `links.json` — your saved named links
-- `notes.json` — your notes
-- `journal/` — a short summary of each session, so tomorrow she recalls today
-
-## Project layout
+Rusty is built on an asynchronous, modular architecture separating the neural reasoning engine from machine automation and secure interfaces:
 
 ```
 JARVIS/
-├── main.py            # the text REPL (Phase 1 entry point)
+├── main.py                     # Interactive terminal REPL
+├── config.json                 # Core system configuration
+├── requirements.txt            # Dependency specification
+├── tests/                      # Automated test suite (32 unit tests)
+│   ├── test_config.py          # Config merging and validation
+│   ├── test_security.py        # Sandbox & credential protection gates
+│   ├── test_memory.py          # Persistent memory and journal tests
+│   ├── test_skills_registry.py # 75-skill schema and integrity tests
+│   └── test_skills_system.py   # System automation and file tests
 ├── vyra/
-│   ├── config.py      # config + env loading, provider swapping
-│   ├── llm.py         # provider adapters (claude / openrouter / google)
-│   ├── memory.py      # profile, links, notes, daily journal
-│   ├── skills.py      # the things she can DO (open/search/save/remember)
-│   └── brain.py       # personality + think->act loop
-├── config.example.json
-└── requirements.txt
+│   ├── brain.py                # ReAct think-act loop & multi-hop tool execution
+│   ├── config.py               # Layered configuration & environment parser
+│   ├── gui_server.py           # Aiohttp HUD server & WebSocket bridge
+│   ├── llm.py                  # Multi-provider client (Claude / Gemini / OpenRouter)
+│   ├── memory.py               # Three-tier local persistent memory (JSON/MD)
+│   ├── office_skills.py        # Comprehensive Office, PDF, PPTX & project generation
+│   ├── remote_telegram.py      # Encrypted Telegram bot gateway (voice + commands)
+│   ├── voice.py                # Local Faster-Whisper ASR + Neural Edge-TTS engine
+│   ├── wake.py                 # Continuous passive wake word detection
+│   └── skills/                 # Modular 75-Skill Dispatcher
+│       ├── common.py           # Path resolution, security validation, Win32 desktop API
+│       ├── system.py           # Terminal, window management, volume, hotkeys, input
+│       ├── files.py            # File I/O, search, listing, and safe recycling
+│       ├── browser.py          # Browser automation, tab control, web research, links
+│       ├── media.py            # Raaga music app, audio controls, screen vision, screenshots
+│       ├── comms.py            # Telegram file transfer, WhatsApp, Drive backup, GitHub CLI
+│       └── assistant.py        # Memory facts, notes, reminders, routines, deep thinking
+└── .github/workflows/
+    └── ci.yml                  # Automated continuous integration workflow
 ```
 
-## Roadmap
+---
 
-1. ✅ Text brain + memory + core skills (provider-swappable)
-2. ✅ Voice — local Whisper ears + Edge-TTS voice + "VYRA" wake word *(untested; needs a mic)*
-3. 🔜 Full PC control + Brave/YouTube/Meet + GUI automation
-4. 🟡 Browser magic — image generation via logged-in Gemini web *(built; needs a one-time `--login` and a live test)*
-5. 🔜 Autostart on logon
+## Core Capabilities (75 Registered Skills)
+
+1. **Voice & Hearing Pipeline**:
+   - Local, privacy-first transcription with **Faster-Whisper** (`small` model on NVIDIA CUDA with CPU fallback).
+   - High-fidelity neural voice synthesis via Microsoft Edge-TTS with multi-lingual auto-switching (English + Hindi `hi-IN-MadhurNeural`).
+   - Non-blocking continuous wake-word monitoring (`"Rusty"`, `"Friday"`, `"Jarvis"`).
+2. **Tactical Holographic HUD (Stark Industries Interface)**:
+   - High-FPS canvas-based Arc Reactor core, real-time audio spectrum, and live hardware telemetry (CPU, RAM, GPU, battery, ping).
+   - Borderless desktop PiP application or browser view.
+3. **Hardware & Desktop Automation**:
+   - Win32 window enumeration, smart tab closing (`Ctrl+W`), process management, master volume control, screen brightness, and lock/sleep triggers.
+4. **Autonomous Office & Document Generation**:
+   - Generates fully populated, styled Word documents (`.docx`), presentation decks (`.pptx`), Excel sheets (`.xlsx`), and clean formatted PDFs (`reportlab`).
+5. **Secure Remote Gateway (Phone Control)**:
+   - Control your PC from anywhere in the world via Telegram with constant-time HMAC authentication, rate-limiting, and 15-minute brute-force lockout.
+   - Send files from PC to phone with a single voice directive.
+
+---
+
+## Security Model & Hardening
+
+Rusty enforces strict security boundaries designed for autonomous systems:
+- **Sandbox Validation (`is_path_safe`)**: Blocks access, deletion, or exfiltration of system credentials, `.env`, `.ssh`, AWS keys, GPG keys, and browser session cookies.
+- **Terminal Execution Gates**: Catastrophic disk and system commands (`bcdedit`, `bootrec`, `vssadmin`, `iex`, encoded payloads) are blocked at the regex parsing layer. Destructive operations (`rmdir`, `del`, `taskkill /f`, `git reset --hard`) require explicit `confirm=True` validation.
+- **Localhost Default**: HUD server binds strictly to `127.0.0.1` by default.
+- **HMAC Constant-Time PIN Verification**: Protects against timing attacks on remote endpoints.
+
+---
+
+## Quickstart
+
+### 1. Requirements & Setup
+Ensure Python 3.10+ (Python 3.12 recommended) is installed:
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Configure Environment
+Copy configuration templates and specify your LLM key:
+
+```bash
+copy config.example.json config.json
+copy .env.example .env
+```
+
+Edit `.env`:
+```env
+VYRA_API_KEY=your_gemini_or_claude_api_key
+```
+
+### 3. Launch Rusty
+
+- **Tactical Desktop HUD**:
+  ```bash
+  .\launch_rusty.bat
+  # or: python -m vyra.gui_server
+  ```
+- **Text Command REPL**:
+  ```bash
+  python main.py
+  ```
+
+---
+
+## Automated Test Suite
+
+Rusty includes a comprehensive 32-test unit testing suite verifying configuration parsing, security boundaries, memory persistence, schema validity, and tool dispatch:
+
+```bash
+python -m unittest discover tests -v
+```
+
+All pull requests and pushes are automatically validated via GitHub Actions CI (`.github/workflows/ci.yml`).
