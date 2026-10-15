@@ -1,6 +1,9 @@
 # Secrets & personal config — never commit
 .env
 config.json
+start-claude.bat
+*.local.bat
+*.local.ps1
 
 # VYRA's memory about you
 data/

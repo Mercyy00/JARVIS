@@ -7,8 +7,7 @@ accepted. Each message is handed to Rusty's brain and the reply is sent back.
 Supports both text commands and bidirectional voice notes!
 """
 
-from __future__ import annotations
-
+import hmac
 import json
 import threading
 import time
@@ -24,12 +23,14 @@ class TelegramBridge:
     def __init__(self, token: str, on_message, allowed_chat_id: str = "", ears=None):
         self.token = token
         self.on_message = on_message
-        self.allowed = str(allowed_chat_id or "")
+        self.allowed = str(allowed_chat_id or "").strip()
         self.ears = ears
         self.base = f"https://api.telegram.org/bot{token}"
         self._stop = threading.Event()
         self._offset = 0
         self._thread = None
+        self._failed_attempts: dict[str, list[float]] = {}
+        self._lockout_until: dict[str, float] = {}
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -142,25 +143,50 @@ class TelegramBridge:
                     continue
 
                 if not self.allowed:
+                    now = time.time()
+                    if chat in self._lockout_until and now < self._lockout_until[chat]:
+                        rem = int(self._lockout_until[chat] - now)
+                        self.send(chat, f"Locked out due to excessive failed attempts. Try again in {rem} seconds.")
+                        continue
+
                     try:
-                        cfg_pin = str(json.loads(CONFIG_PATH.read_text("utf-8")).get("remote", {}).get("pin", "") or "")
+                        cfg_pin = str(json.loads(CONFIG_PATH.read_text("utf-8")).get("remote", {}).get("pin", "") or "").strip()
                     except Exception:
                         cfg_pin = ""
+
+                    if not cfg_pin:
+                        self.send(chat, "Pairing disabled: No PIN configured in config.json ('remote.pin'). Set a secure PIN on the host machine first.")
+                        continue
+
                     parts = text.split()
+                    submitted_pin = ""
+                    if parts and parts[0].lower() in ("/link", "/auth", "/pin") and len(parts) > 1:
+                        submitted_pin = parts[1].strip()
+                    elif text.strip().isdigit() and len(text.strip()) >= 4:
+                        submitted_pin = text.strip()
+
                     is_authed = False
-                    if cfg_pin:
-                        if (parts[0].lower() in ("/link", "/auth", "/pin") and len(parts) > 1 and parts[1] == cfg_pin) or text == cfg_pin:
-                            is_authed = True
-                    else:
+                    if submitted_pin and hmac.compare_digest(submitted_pin, cfg_pin):
                         is_authed = True
 
                     if is_authed:
                         self.allowed = chat
+                        self._failed_attempts.pop(chat, None)
+                        self._lockout_until.pop(chat, None)
                         self._persist_chat_id(chat)
                         self.send(chat, "Rusty linked to this chat, Sir. Send me a command or voice note anytime.")
                         continue
                     else:
-                        self.send(chat, "Locked. To link this Telegram account with Rusty, send: /link <your_pin>")
+                        attempts = self._failed_attempts.get(chat, [])
+                        attempts = [t for t in attempts if now - t < 600]  # 10 min window
+                        attempts.append(now)
+                        self._failed_attempts[chat] = attempts
+                        if len(attempts) >= 3:
+                            self._lockout_until[chat] = now + 900  # 15 min lockout
+                            self.send(chat, "Too many failed pairing attempts. Locked out for 15 minutes.")
+                        else:
+                            rem_attempts = 3 - len(attempts)
+                            self.send(chat, f"Locked. To link this Telegram account with Rusty, send: /link <your_pin> ({rem_attempts} attempt{'s' if rem_attempts != 1 else ''} remaining).")
                         continue
 
                 if chat != self.allowed:

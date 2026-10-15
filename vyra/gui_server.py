@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import hmac
 import json
 import os
 import re
@@ -964,21 +965,54 @@ async def deliver_startup_greeting():
         print(f"[STARTUP GREETING NOTICE] {exc}")
 
 
-REMOTE_PIN = str(config.get("remote", {}).get("pin", "") or "")
+REMOTE_PIN = str(config.get("remote", {}).get("pin", "") or "").strip()
+BIND_ALL = bool(config.get("remote", {}).get("bind_all", False))
+SERVER_HOST = "0.0.0.0" if BIND_ALL else "127.0.0.1"
+
+_ip_failed_attempts: dict[str, list[float]] = {}
+_ip_lockouts: dict[str, float] = {}
 
 
 @web.middleware
 async def _auth_middleware(request, handler):
     """Local (127.0.0.1) requests pass freely; remote/phone requests need the PIN.
-    Keeps the phone gateway usable without exposing full PC control unauthenticated."""
+    Enforces constant-time comparison and brute-force lockout."""
     peer = request.remote or ""
     if peer in ("127.0.0.1", "::1", "localhost"):
         return await handler(request)
+
+    now = time.time()
+    # Check IP lockout
+    if peer in _ip_lockouts and now < _ip_lockouts[peer]:
+        rem = int(_ip_lockouts[peer] - now)
+        return web.Response(status=429, text=f"Too many failed PIN attempts. Locked out for {rem} more seconds.")
+
     if not REMOTE_PIN:
-        return web.Response(status=403, text="Remote access disabled. Set remote.pin in config.json.")
-    given = request.query.get("pin") or request.headers.get("X-Rusty-Pin") or ""
-    if given != REMOTE_PIN:
-        return web.Response(status=403, text="Forbidden — wrong or missing PIN.")
+        return web.Response(status=403, text="Remote access disabled. Set remote.pin in config.json to enable remote gateway.")
+
+    # Extract PIN from headers or query
+    auth_header = request.headers.get("Authorization", "")
+    given = ""
+    if auth_header.startswith("Bearer "):
+        given = auth_header[7:].strip()
+    elif "X-Rusty-Pin" in request.headers:
+        given = request.headers["X-Rusty-Pin"].strip()
+    elif "pin" in request.query:
+        given = request.query["pin"].strip()
+
+    if not given or not hmac.compare_digest(given, REMOTE_PIN):
+        attempts = _ip_failed_attempts.get(peer, [])
+        attempts = [t for t in attempts if now - t < 300]  # 5 min window
+        attempts.append(now)
+        _ip_failed_attempts[peer] = attempts
+        if len(attempts) >= 5:
+            _ip_lockouts[peer] = now + 900  # 15 min lockout
+            return web.Response(status=429, text="Too many failed PIN attempts. Locked out for 15 minutes.")
+        return web.Response(status=403, text=f"Forbidden: Invalid or missing PIN ({5 - len(attempts)} attempts remaining).")
+
+    # Success: clear failed attempts
+    _ip_failed_attempts.pop(peer, None)
+    _ip_lockouts.pop(peer, None)
     return await handler(request)
 
 
@@ -1104,7 +1138,7 @@ def main():
             def run_server():
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                web.run_app(app, host="0.0.0.0", port=port, print=None)
+                web.run_app(app, host=SERVER_HOST, port=port, print=None)
 
             t = threading.Thread(target=run_server, daemon=True)
             t.start()
@@ -1139,7 +1173,7 @@ def main():
     def run_server_bg():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        web.run_app(app, host="0.0.0.0", port=port, print=None)
+        web.run_app(app, host=SERVER_HOST, port=port, print=None)
 
     t = threading.Thread(target=run_server_bg, daemon=True)
     t.start()

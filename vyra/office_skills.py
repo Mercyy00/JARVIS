@@ -34,10 +34,10 @@ def _open(path: str) -> bool:
     except Exception:
         pass
 
-    # Fallback 1: PowerShell Start-Process
+    # Fallback 1: PowerShell Start-Process with parameterized argument (no string interpolation)
     try:
         res = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", f'Start-Process -FilePath "{p}"'],
+            ["powershell", "-NoProfile", "-Command", "param($f) Start-Process -FilePath $f", "-args", p],
             capture_output=True, timeout=5
         )
         if res.returncode == 0:
@@ -55,9 +55,9 @@ def _open(path: str) -> bool:
             except Exception:
                 continue
 
-    # Fallback 3: CMD start
+    # Fallback 3: CMD start without shell=True
     try:
-        subprocess.run(f'start "" "{p}"', shell=True, timeout=5)
+        subprocess.run(["cmd", "/c", "start", "", p], timeout=5)
         return True
     except Exception:
         pass

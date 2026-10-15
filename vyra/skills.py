@@ -93,17 +93,25 @@ def configure_vision(llm_config: dict):
 def _open_in_browser(url: str):
     if _BROWSER:
         try:
-            subprocess.Popen(f'start "" "{_BROWSER}" "{url}"', shell=True)
+            subprocess.Popen([_BROWSER, url])
             return
         except Exception:
-            pass
+            try:
+                subprocess.Popen(["cmd", "/c", "start", "", _BROWSER, url])
+                return
+            except Exception:
+                pass
     webbrowser.open(url)
 
 
 def open_app(memory, name: str) -> str:
-    target = APP_ALIASES.get(name.lower().strip(), name)
+    clean_name = name.lower().strip()
+    target = APP_ALIASES.get(clean_name, clean_name)
     try:
-        subprocess.Popen(f'start "" "{target}"', shell=True)
+        if os.path.exists(target):
+            os.startfile(target)
+        else:
+            subprocess.Popen(["cmd", "/c", "start", "", target])
         return f"Opening {name}."
     except Exception as exc:
         return f"Couldn't open {name}: {exc}"
@@ -201,12 +209,21 @@ def _resolve_path(path_str: str) -> str:
 
 PROTECTED_PATH_PATTERNS = [
     r"\\windows\\system32\\config",
-    r"\\windows\\system32\\drivers\\etc\\hosts",
+    r"\\windows\\system32\\drivers\\etc",
+    r"\\windows\\system32\\sam",
     r"\.env($|\.)",
+    r"secrets?\.(json|yaml|yml|toml)$",
+    r"credentials?\.(json|yaml|yml|xml)$",
     r"id_rsa($|\.)",
     r"id_ed25519($|\.)",
+    r"id_ecdsa($|\.)",
     r"\.pem$",
-    r"\\user data\\default\\(cookies|login data|web data)",
+    r"\.key$",
+    r"\.pfx$",
+    r"\\\.ssh($|\\)",
+    r"\\\.gnupg($|\\)",
+    r"\\\.aws\\credentials",
+    r"\\user data\\.*\\(cookies|login data|web data|history)",
 ]
 
 
@@ -539,45 +556,53 @@ def list_running_apps(memory) -> str:
     return "\n".join(lines)
 
 
-def delete_file(memory, path: str, permanent: bool = False) -> str:
+def delete_file(memory, path: str, permanent: bool = False, confirm: bool = False) -> str:
     """Delete a file. By default moves to Windows Recycle Bin for safety."""
     full_path = _resolve_path(path)
+    if not is_path_safe(full_path):
+        return f"Access denied: '{os.path.basename(full_path)}' is in a protected system path, Sir."
     if not os.path.exists(full_path):
         return f"File does not exist: {full_path}"
     if os.path.isdir(full_path):
         return f"'{full_path}' is a folder, not a file. Use delete_folder instead."
     
     if permanent:
+        if not confirm:
+            return f"Safety Hold: Permanent file deletion cannot be undone, Sir. Confirm to permanently delete '{os.path.basename(full_path)}'."
         try:
             os.remove(full_path)
-            return f"Permanently deleted '{os.path.basename(full_path)}'."
+            return f"Permanently deleted '{os.path.basename(full_path)}', Sir."
         except Exception as exc:
             return f"Error deleting file: {exc}"
     else:
-        ps_cmd = f"Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('{full_path}', 'OnlyErrorDialogs', 'SendToRecycleBin')"
-        res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True)
+        ps_cmd = "param([string]$target) Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($target, 'OnlyErrorDialogs', 'SendToRecycleBin')"
+        res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd, "-target", full_path], capture_output=True, text=True)
         if res.returncode == 0:
             return f"Moved '{os.path.basename(full_path)}' to the Windows Recycle Bin."
         return f"Failed to recycle file: {res.stderr.strip()}"
 
 
-def delete_folder(memory, path: str, permanent: bool = False) -> str:
+def delete_folder(memory, path: str, permanent: bool = False, confirm: bool = False) -> str:
     """Delete a directory. By default moves to Windows Recycle Bin for safety."""
     full_path = _resolve_path(path)
+    if not is_path_safe(full_path):
+        return f"Access denied: '{os.path.basename(full_path)}' is in a protected system path, Sir."
     if not os.path.exists(full_path):
         return f"Folder does not exist: {full_path}"
     if not os.path.isdir(full_path):
         return f"'{full_path}' is a file, not a folder. Use delete_file instead."
 
     if permanent:
+        if not confirm:
+            return f"Safety Hold: Permanently deleting folder '{os.path.basename(full_path)}' will destroy all its contents, Sir. Please confirm."
         try:
             shutil.rmtree(full_path)
-            return f"Permanently deleted folder '{os.path.basename(full_path)}'."
+            return f"Permanently deleted folder '{os.path.basename(full_path)}', Sir."
         except Exception as exc:
             return f"Error deleting folder: {exc}"
     else:
-        ps_cmd = f"Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('{full_path}', 'OnlyErrorDialogs', 'SendToRecycleBin')"
-        res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True)
+        ps_cmd = "param([string]$target) Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($target, 'OnlyErrorDialogs', 'SendToRecycleBin')"
+        res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd, "-target", full_path], capture_output=True, text=True)
         if res.returncode == 0:
             return f"Moved folder '{os.path.basename(full_path)}' to the Windows Recycle Bin."
         return f"Failed to recycle folder: {res.stderr.strip()}"
@@ -586,6 +611,8 @@ def delete_folder(memory, path: str, permanent: bool = False) -> str:
 def list_folder(memory, path: str = "downloads") -> str:
     """List files and folders in a directory."""
     full_path = _resolve_path(path)
+    if not is_path_safe(full_path):
+        return f"Access denied: '{os.path.basename(full_path)}' is in a protected path, Sir."
     if not os.path.exists(full_path):
         return f"Folder does not exist: {full_path}"
     if not os.path.isdir(full_path):
@@ -696,7 +723,10 @@ def play_music(memory, query: str = "") -> str:
     target = RAAGA_APP_PATH if os.path.exists(RAAGA_APP_PATH) else "raaga"
     try:
         if not raaga_running:
-            subprocess.Popen(f'start "" "{target}"', shell=True)
+            if os.path.exists(target):
+                os.startfile(target)
+            else:
+                subprocess.Popen(["cmd", "/c", "start", "", target])
             time.sleep(1.8)  # allow app window to initialize
         else:
             subprocess.run(["powershell", "-NoProfile", "-Command", "$wshell = New-Object -ComObject wscript.shell; $wshell.AppActivate('raaga')"], capture_output=True)
@@ -1238,24 +1268,62 @@ def list_routines(memory) -> str:
     return "Routines ready to go: " + ", ".join(routines.list_names()) + "."
 
 
-DANGEROUS_COMMANDS = [
+BLOCKED_COMMAND_PATTERNS = [
     r"\bformat\s+[a-z]:",
     r"\bdiskpart\b",
     r"\bbcdedit\b",
-    r"rmdir\s+/[sq]\s+[a-z]:\\?$",
-    r"del\s+/[fsq]+\s+[a-z]:\\?$",
-    r"remove-item\s+.*-(recurse|force)\s+[a-z]:\\?$",
+    r"\bbootrec\b",
+    r"\bvssadmin\s+delete\s+shadows\b",
+    r"reg\s+delete\s+(hklm|hkcr)",
+    r"set-mppreference\s+.*-disablerealtime",
+    r"netsh\s+advfirewall\s+set\s+allprofiles\s+state\s+off",
+    r"powershell\s+-[eE][a-zA-Z]*\s+[a-zA-Z0-9+/=]{20,}",
+    r"iex\s*\(",
+    r"invoke-expression",
+    r"\.downloadstring\(",
+    r"\.downloadfile\(",
+    r"curl\s+.*\|\s*(powershell|cmd|pwsh)",
+    r"wget\s+.*\|\s*(powershell|cmd|pwsh)",
+    r"\bmimikatz\b",
+]
+
+DESTRUCTIVE_COMMAND_PATTERNS = [
+    r"\brmdir\b",
+    r"\bdel\b",
+    r"\bremove-item\b",
+    r"\bformat\b",
+    r"git\s+reset\s+--hard",
+    r"git\s+clean\s+-[a-zA-Z]*f",
+    r"git\s+push\s+.*--force",
+    r"git\s+branch\s+-[a-zA-Z]*D",
+    r"taskkill\s+.*(/f|-f)",
+    r"stop-process\s+.*-force",
+    r"\bshutdown\b",
+    r"\brestart-computer\b",
+    r"clear-recyclebin\b",
 ]
 
 
-def run_terminal_command(memory, command: str, progress_callback=None) -> str:
+def run_terminal_command(memory, command: str, confirm: bool = False, progress_callback=None) -> str:
     """Execute a PowerShell or CMD command directly on Jay's computer and return output."""
+    cmd = (command or "").strip()
+    if not cmd:
+        return "Please specify a terminal command to execute, Sir."
+
     if progress_callback:
         progress_callback("Executing terminal command on system, Sir...", speak=False)
-    cmd_lower = command.lower().strip()
-    for pat in DANGEROUS_COMMANDS:
+    cmd_lower = cmd.lower()
+
+    # 1. Catastrophic/Prohibited Security Block
+    for pat in BLOCKED_COMMAND_PATTERNS:
         if re.search(pat, cmd_lower):
-            return "Command execution blocked: Command matches destructive drive or partition patterns, Sir. Please run critical disk operations manually."
+            return "Security Policy Violation: Command contains prohibited system destruction, defense tampering, or payload execution patterns, Sir."
+
+    # 2. Destructive Commands Require Code-Level Confirmation
+    if not confirm:
+        for pat in DESTRUCTIVE_COMMAND_PATTERNS:
+            if re.search(pat, cmd_lower):
+                return f"Safety Hold: That terminal command is potentially destructive, Sir. To proceed, confirm and I will execute it: {cmd}"
 
     try:
         proc = subprocess.Popen(
@@ -1603,6 +1671,8 @@ def backup_to_drive(memory, path: str, dest: str = "") -> str:
     remote = dc.get("remote", "gdrive")
     base = dc.get("base_folder", "RustyBackup")
     full = _resolve_path(path)
+    if not is_path_safe(full):
+        return f"Access denied: '{os.path.basename(full)}' contains protected credentials or system files and cannot be uploaded to remote storage, Sir."
     if not os.path.exists(full):
         return f"I couldn't find '{path}', Sir."
     name = dest or os.path.basename(full.rstrip("/\\")) or "misc"
@@ -1657,8 +1727,8 @@ def github(memory, command: str, confirm: bool = False) -> str:
 
 
 SKILLS = [
-    {"name": "run_terminal_command", "fn": run_terminal_command, "description": "Execute a PowerShell/terminal command on Jay's computer and return output. Use for git, python, npm, system checks, script execution, inspecting files, or diagnostics.",
-     "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The PowerShell or CMD command to execute"}}, "required": ["command"]}},
+    {"name": "run_terminal_command", "fn": run_terminal_command, "description": "Execute a PowerShell/terminal command on Jay's computer and return output. Use for git, python, npm, system checks, script execution, inspecting files, or diagnostics. Destructive commands require confirm=True.",
+     "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The PowerShell or CMD command to execute"}, "confirm": {"type": "boolean", "description": "Set to true only when Jay explicitly confirmed running a destructive or modifying command (e.g. file removal, git reset/force, taskkill)"}}, "required": ["command"]}},
     {"name": "press_hotkey", "fn": press_hotkey, "description": "Press a keyboard shortcut/hotkey combo on Windows (e.g. 'ctrl+c', 'ctrl+v', 'alt+tab', 'win+d', 'enter', 'esc').",
      "parameters": {"type": "object", "properties": {"combo": {"type": "string", "description": "Key combination like 'ctrl+v', 'alt+tab', 'win+d', 'enter'"}}, "required": ["combo"]}},
     {"name": "click_mouse", "fn": click_mouse, "description": "Click or double-click the mouse at specified coordinates (x, y) or at current cursor position.",
@@ -1745,9 +1815,9 @@ SKILLS = [
     {"name": "list_routines", "fn": list_routines, "description": "List the available routines.",
      "parameters": {"type": "object", "properties": {}, "required": []}},
     {"name": "delete_file", "fn": delete_file, "description": "Delete a file. By default, safely moves it to the Windows Recycle Bin so it can be restored.",
-     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "File path or shortcut (e.g. downloads/test.txt)"}, "permanent": {"type": "boolean", "description": "If true, permanently delete instead of moving to Recycle Bin (default false)"}}, "required": ["path"]}},
+     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "File path or shortcut (e.g. downloads/test.txt)"}, "permanent": {"type": "boolean", "description": "If true, permanently delete instead of moving to Recycle Bin (default false)"}, "confirm": {"type": "boolean", "description": "Explicit confirmation required if permanent is true"}}, "required": ["path"]}},
     {"name": "delete_folder", "fn": delete_folder, "description": "Delete a folder. By default, safely moves it to the Windows Recycle Bin.",
-     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "Folder path or shortcut (e.g. downloads/old_dir)"}, "permanent": {"type": "boolean", "description": "If true, permanently delete instead of moving to Recycle Bin (default false)"}}, "required": ["path"]}},
+     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "Folder path or shortcut (e.g. downloads/old_dir)"}, "permanent": {"type": "boolean", "description": "If true, permanently delete instead of moving to Recycle Bin (default false)"}, "confirm": {"type": "boolean", "description": "Explicit confirmation required if permanent is true"}}, "required": ["path"]}},
     {"name": "list_folder", "fn": list_folder, "description": "List files and subfolders in a directory (e.g. downloads, desktop, documents).",
      "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "Folder path or shortcut (default: downloads)"}}, "required": []}},
     {"name": "empty_recycle_bin", "fn": empty_recycle_bin, "description": "Empty the Windows Recycle Bin.",

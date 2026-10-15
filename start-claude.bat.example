@@ -10,7 +10,10 @@ if %errorlevel% neq 0 (
 )
 
 set ANTHROPIC_BASE_URL=http://127.0.0.1:8089
-set ANTHROPIC_API_KEY=sk-rj6jhoivAL5uGmKoBzQIWOK57YIZZEjAVGttGNa8XjdOI9u0
+REM Set your personal API key here or in your user environment / .env file:
+if "%ANTHROPIC_API_KEY%"=="" (
+    set ANTHROPIC_API_KEY=your_api_key_here
+)
 
-echo Claude Code initialized with custom API key.
+echo Claude Code initialized.
 claude --model claude-opus-4-8
