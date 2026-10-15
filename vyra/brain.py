@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import datetime
 
 from . import skills
@@ -223,6 +224,14 @@ class Brain:
         self.history.append({"role": "user", "content": user_text})
         system = self.system_prompt()
 
+        # Dynamically recall relevant memories, notes, and facts
+        try:
+            recalled = self.memory.get_relevant_context(user_text)
+            if recalled:
+                system = f"{system}\n\n{recalled}"
+        except Exception:
+            pass
+
         try:
             last_tool_sig = None
             repeat_tool_count = 0
@@ -255,7 +264,13 @@ class Brain:
                                     progress_callback(st, speak=True)
                                 except Exception:
                                     pass
+                        t0 = time.time()
                         output = skills.execute(tc["name"], tc["args"], self.memory, progress_callback=progress_callback)
+                        duration_ms = (time.time() - t0) * 1000.0
+                        try:
+                            self.memory.log_action(tc["name"], tc.get("args") or {}, output, duration_ms=duration_ms)
+                        except Exception:
+                            pass
                         results.append({"id": tc["id"], "name": tc["name"], "output": output})
                     self.history.append({"role": "tool", "results": results})
                     continue
@@ -264,6 +279,11 @@ class Brain:
                 self.history.append({"role": "assistant", "content": text})
                 self._trim_history()
                 self._save_history()
+                try:
+                    self.memory.log_turn("session", "user", user_text)
+                    self.memory.log_turn("session", "assistant", text)
+                except Exception:
+                    pass
                 return text
 
             return "I got a bit tangled doing that — mind trying again?"

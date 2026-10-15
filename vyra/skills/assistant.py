@@ -44,6 +44,23 @@ def delete_note(memory, query: str) -> str:
     return "Deleted matching note, Sir." if ok else f"No note matching '{query}' found to delete, Sir."
 
 
+def search_memory(memory, query: str) -> str:
+    """Semantically search long-term memories, facts, notes, and past interactions."""
+    try:
+        results = memory.semantic_search(query, top_k=5)
+        if not results:
+            return f"No memories found matching '{query}', Sir."
+        lines = [f"Recalled memories for '{query}':"]
+        for r in results:
+            src = r.get("source_type", "memory").title()
+            content = r.get("content", "").strip()
+            score = r.get("score", 0.0)
+            lines.append(f"  - [{src}] {content} (relevance: {score:.2f})")
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"Memory recall failed: {exc}"
+
+
 def read_clipboard(memory) -> str:
     """Read the current text content copied to the Windows clipboard."""
     try:
@@ -223,6 +240,8 @@ ASSISTANT_SKILLS = [
      "parameters": {"type": "object", "properties": {}, "required": []}},
     {"name": "delete_note", "fn": delete_note, "description": "Delete a note from memory by a word or phrase from its content.",
      "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Search text to identify the note to delete"}}, "required": ["query"]}},
+    {"name": "search_memory", "fn": search_memory, "description": "Search long-term memories, notes, facts, and past conversations using semantic search and keywords.",
+     "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Search topic, question, or keyword to retrieve from memory"}}, "required": ["query"]}},
     {"name": "read_clipboard", "fn": read_clipboard, "description": "Read text currently copied to the Windows clipboard.",
      "parameters": {"type": "object", "properties": {}, "required": []}},
     {"name": "write_clipboard", "fn": write_clipboard, "description": "Copy specified text to the Windows clipboard.",

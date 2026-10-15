@@ -14,6 +14,8 @@ class TestMemory(unittest.TestCase):
         self.memory = Memory(self.test_dir)
 
     def tearDown(self):
+        if hasattr(self, "memory") and self.memory:
+            self.memory.close()
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_profile_name(self):
